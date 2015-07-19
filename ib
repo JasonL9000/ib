@@ -236,6 +236,7 @@ class LinkerJob(Job):
     rule.AppendToRecipe(
         [ planner.cfg.link.tool ] + planner.cfg.link.flags +
         [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
+        [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
         [ '-l' + lib for lib in planner.cfg.link.libs ])
     return rule
 
@@ -578,7 +579,9 @@ class Cfg(object):
     del self.__dict__['__builtins__']
     del self.Obj
     self.cfg = Obj(name=name, base=base.cfg if base else None, imports=imports)
-    if not hasattr(self.link, 'libs'): self.link.libs = []
+    for name in [ 'libs', 'lib_dirs' ]:
+      if not hasattr(self.link, name):
+        setattr(self.link, name, [])
 
   def __repr__(self):
     def Comment(cfg, label):
