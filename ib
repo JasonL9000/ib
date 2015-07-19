@@ -450,7 +450,9 @@ class Planner(object):
     return '\n'.join(rule.script for rule in rules)
 
   def GetCcArgs(self):
-    return [ self.cfg.cc.tool, '-I' + self.src_root, '-I' + self.out_root ] + self.cfg.cc.flags
+    return [ self.cfg.cc.tool, '-I' + self.src_root, '-I' + self.out_root ]  \
+        + [ '-I' + incl_dir for incl_dir in self.cfg.cc.incl_dirs ]  \
+        + self.cfg.cc.flags
 
   def GetHdrs(self, abspath):
     hdrs = self.cached_hdrs.get(abspath)
@@ -579,9 +581,11 @@ class Cfg(object):
     del self.__dict__['__builtins__']
     del self.Obj
     self.cfg = Obj(name=name, base=base.cfg if base else None, imports=imports)
-    for name in [ 'libs', 'lib_dirs' ]:
-      if not hasattr(self.link, name):
-        setattr(self.link, name, [])
+    for obj_name, field_names in Cfg.DEFAULT_EMPTY_LISTS.iteritems():
+      obj = getattr(self, obj_name)
+      for field_name in field_names:
+        if not hasattr(obj, field_name):
+          setattr(obj, field_name, [])
 
   def __repr__(self):
     def Comment(cfg, label):
@@ -624,6 +628,10 @@ class Cfg(object):
     exec compile(ast.Module(body=scout.stmts), filename, mode='exec') in self.__dict__
     return imports
 
+  DEFAULT_EMPTY_LISTS = {
+    'cc':   [ 'incl_dirs' ],
+    'link': [ 'libs', 'lib_dirs' ]
+  }
 
 class Obj(object):
   "A generic object made up of the keyword args passed to its initializer."
