@@ -452,6 +452,8 @@ class Planner(object):
   def GetCcArgs(self):
     return [ self.cfg.cc.tool, '-I' + self.src_root, '-I' + self.out_root ]  \
         + [ '-I' + incl_dir for incl_dir in self.cfg.cc.incl_dirs ]  \
+        + [ '-DIB_SRC_ROOT=' + self.src_root,
+            '-DIB_OUT_ROOT=' + self.out_root ]  \
         + self.cfg.cc.flags
 
   def GetHdrs(self, abspath):
