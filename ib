@@ -118,7 +118,7 @@ class ExeSpec(Spec):
 
   PREFIX = ''
   DEFAULT_EXT = ''
-  OTHER_EXTS = ['.js']
+  OTHER_EXTS = [ '.js' ]
 
 
 class HdrSpec(Spec):
@@ -238,6 +238,10 @@ class LinkerJob(Job):
         [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
         [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
         [ '-l' + lib for lib in planner.cfg.link.libs ])
+    # This is a temporary work-around for -main executables.
+    # It should really backtrack from foo-main to foo-main.o properly.
+    if rule.outputs[0].endswith("-main"):
+      rule.AppendToRecipe([ "mv", rule.outputs[0], rule.outputs[0][:-5] ])
     return rule
 
   VERB = 'link'
