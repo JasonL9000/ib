@@ -12,7 +12,7 @@
 # limitations under the License.
 
 
-import argparse, ast, os, subprocess, tempfile, textwrap
+import argparse, ast, os, platform, subprocess, tempfile, textwrap
 
 
 class IbError(Exception): pass
@@ -581,6 +581,7 @@ class Cfg(object):
     super(Cfg, self).__init__()
     self.Obj = Obj
     self.os = os
+    self.platform = platform
     if base is not None:
       self.__dict__.update(base.__dict__)
     imports = self.__Update(root, name, conv_dots=base is None)
