@@ -69,6 +69,9 @@ class Spec(object):
     self.atom = atom
     self.ext = ext
 
+  def __repr__(self):
+    return 'Spec(branch=%r, atom=%r, ext=%r)' % (self.branch, self.atom, self.ext)
+
   def __eq__(self, other):
     return (
         self.atom == other.atom and
@@ -677,6 +680,10 @@ class Scout(ast.NodeVisitor):
 
 LABEL_FILE = '__ib__'
 
+RED = '\x1b[1;31m'
+GREEN = '\x1b[1;32m'
+NORMAL = '\x1b[0m'
+
 
 def main():
   def GetArgs():
@@ -731,6 +738,12 @@ def main():
              "date. Make sure to specify this option after you modify the "
              "contents of a relevant config file.")
     parser.add_argument(
+        '--test', action='store_true',
+        help="Run each unit test after building.")
+    parser.add_argument(
+        '--test_all', action='store_true',
+        help="Compile and run all the tests in the given subtree.")
+    parser.add_argument(
         'targets', metavar='target', nargs='*',
         help="The spec of a target you want to build. If relative, the spec "
              "is relative to the current directory. If absolute, the spec is "
@@ -773,14 +786,38 @@ def main():
         cfg=cfg,
         src_root=args.src_root,
         out_root=args.out_root)
-    specs = [ planner.ConvTargetToSpec(target) for target in args.targets ]
+    targets = []
+    if args.test_all:
+      for target in args.targets:
+        for root, _, filenames in os.walk(target):
+          for filename in filenames:
+            if filename.endswith('-test.cc'):
+              targets.append(os.path.join(root, filename[:len(filename) - 3]))
+    else:
+      targets = args.targets
+    specs = [ planner.ConvTargetToSpec(target) for target in targets ]
     for wave_number, wave in enumerate(planner.YieldWaves(specs), start=1):
       script = planner.ConvWaveToScript(wave)
       if args.print_script:
         print '# wave %d\n%s' % (wave_number, script)
       if not args.no_run and not planner.RunScript(script, force=args.force):
         break
-    return 0
+    success = True
+    if args.test_all or args.test:
+      pass_specs = []
+      fail_specs = []
+      for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
+        status = subprocess.call(
+            [ os.path.join(planner.out_root, spec.relpath) ])
+        (pass_specs if status == 0 else fail_specs).append(spec)
+      for name, specs in [
+          (GREEN + 'passed' + NORMAL, pass_specs),
+          (RED + 'failed' + NORMAL, fail_specs) ]:
+        if specs:
+          print '%s %d (%s)' % (
+              name, len(specs), ', '.join(spec.relpath for spec in specs))
+      success = not fail_specs
+    return 0 if success else -1
   except IbError, err:
     print '** ib error **'
     for line in textwrap.wrap(str(err)):
