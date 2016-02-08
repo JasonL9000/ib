@@ -795,18 +795,22 @@ def main():
               targets.append(os.path.join(root, filename[:len(filename) - 3]))
     else:
       targets = args.targets
+    success = True
     specs = [ planner.ConvTargetToSpec(target) for target in targets ]
     for wave_number, wave in enumerate(planner.YieldWaves(specs), start=1):
       script = planner.ConvWaveToScript(wave)
       if args.print_script:
         print '# wave %d\n%s' % (wave_number, script)
-      if not args.no_run and not planner.RunScript(script, force=args.force):
+      if args.no_run:
+        return 0
+      if not planner.RunScript(script, force=args.force):
+        success = False
         break
-    success = True
-    if args.test_all or args.test:
+    if success and (args.test_all or args.test):
       pass_specs = []
       fail_specs = []
       for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
+        print 'running %s' % spec.relpath
         status = subprocess.call(
             [ os.path.join(planner.out_root, spec.relpath) ])
         (pass_specs if status == 0 else fail_specs).append(spec)
