@@ -240,7 +240,9 @@ class LinkerJob(Job):
         [ planner.cfg.link.tool ] + planner.cfg.link.flags +
         [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
         [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
-        [ '-l' + lib for lib in planner.cfg.link.libs ])
+        [ '-l' + lib for lib in planner.cfg.link.libs ] +
+        [ '-Wl,-Bstatic' ] +
+        [ '-l' + lib for lib in planner.cfg.link.static_libs ])
     # This is a temporary work-around for -main executables.
     # It should really backtrack from foo-main to foo-main.o properly.
     if rule.outputs[0].endswith("-main"):
@@ -640,7 +642,7 @@ class Cfg(object):
 
   DEFAULT_EMPTY_LISTS = {
     'cc':   [ 'incl_dirs' ],
-    'link': [ 'libs', 'lib_dirs' ]
+    'link': [ 'libs', 'static_libs', 'lib_dirs' ]
   }
 
 class Obj(object):
@@ -698,7 +700,7 @@ def main():
     cfg_root = '.'
     cfg = 'debug'
     parser = argparse.ArgumentParser(
-        description="An inntuitive builder of C++ projects. Version 0.2.1.")
+        description="An inntuitive builder of C++ projects. Version 0.4.")
     parser.add_argument(
         '--src_root', default=src_root,
         help="The root of source tree. If relative, this is path is relative "
