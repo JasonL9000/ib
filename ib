@@ -12,7 +12,7 @@
 # limitations under the License.
 
 
-import argparse, ast, os, platform, subprocess, tempfile, textwrap
+import argparse, ast, os, platform, subprocess, tempfile, textwrap, sys
 
 
 class IbError(Exception): pass
@@ -236,14 +236,22 @@ class LinkerJob(Job):
     for plan in plans:
       if type(plan.output_spec) is ObjSpec:
         rule.dependencies.add(plan.GetOutputAbspath(planner))
-    rule.AppendToRecipe(
-        [ planner.cfg.link.tool ] + planner.cfg.link.flags +
-        [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
-        [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
-        [ '-l' + lib for lib in planner.cfg.link.libs ] +
-        [ '-Wl,-Bstatic' ] +
-        [ '-l' + lib for lib in planner.cfg.link.static_libs ] +
-        [ '-Wl,-Bdynamic' ])
+
+    if sys.platform == 'darwin':
+      rule.AppendToRecipe(
+          [ planner.cfg.link.tool ] + planner.cfg.link.flags +
+          [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
+          [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
+          [ '-l' + lib for lib in planner.cfg.link.libs ])
+    else:
+      rule.AppendToRecipe(
+          [ planner.cfg.link.tool ] + planner.cfg.link.flags +
+          [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
+          [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
+          [ '-l' + lib for lib in planner.cfg.link.libs ] +
+          [ '-Wl,-Bstatic' ] +
+          [ '-l' + lib for lib in planner.cfg.link.static_libs ] +
+          [ '-Wl,-Bdynamic' ])
     # This is a temporary work-around for -main executables.
     # It should really backtrack from foo-main to foo-main.o properly.
     if rule.outputs[0].endswith("-main"):
@@ -253,7 +261,6 @@ class LinkerJob(Job):
   VERB = 'link'
   INPUT_SPEC_TYPE = ObjSpec
   OUTPUT_SPEC_TYPES = { 'exe': ExeSpec }
-
 
 class Producer(object):
   def __init__(self, key, job_type):
@@ -470,7 +477,12 @@ class Planner(object):
     hdrs = self.cached_hdrs.get(abspath)
     if hdrs is None:
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
-      output = subprocess.check_output(args)
+
+      output = RubberDucky(args, (
+        'Config Error:',
+        'Something seems odd. We have a config error.',
+        'There was a problem running the following command:'
+      )).Process(True).out
       output = output.split(':', 1)[1]
       output = output.replace('\\', ' ')
       hdrs = []
@@ -517,10 +529,19 @@ class Planner(object):
       f.write(script)
       name = f.name
     try:
-      return subprocess.call(
-          [ self.cfg.make.tool ] + self.cfg.make.flags +
-          ([ self.cfg.make.force_flag] if force else []) +
-          [ '-f' + name, self.cfg.make.all_pseudo_target ]) == 0
+      return RubberDucky(
+        [ self.cfg.make.tool ] +
+        self.cfg.make.flags +
+        (
+          [ self.cfg.make.force_flag] if force else []
+        ) + [
+          '-f' + name,
+          self.cfg.make.all_pseudo_target
+        ], (
+        'Compiler Error:',
+        'Something seems odd. We have a compile error.',
+        'There was a problem running the following command:'
+      )).Process().returncode == 0
     finally:
       os.unlink(name)
 
@@ -686,7 +707,58 @@ LABEL_FILE = '__ib__'
 RED = '\x1b[1;31m'
 GREEN = '\x1b[1;32m'
 NORMAL = '\x1b[0m'
+YELLOW = '\x1b[1;33m'
 
+class RubberDucky(object):
+  def __init__(self, args, header=('Error:', 'Something seems odd')):
+    super(RubberDucky, self).__init__()
+    self.args = args
+    self.header = header
+    self.out = ''
+    self.err = ''
+    self.returncode = 0
+
+  def Process(self, shouldfail=False):
+    proc = subprocess.Popen(self.args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    self.out, self.err = proc.communicate()
+    self.returncode = proc.returncode
+
+    if self.returncode:
+      self.Line()
+      self.Say(YELLOW, 0, self.header[0])
+      self.Line(2)
+      for heading in self.header[1:]:
+        self.Say(YELLOW, 0, heading)
+        self.Line()
+      self.Line()
+      self.SayException()
+
+    if self.returncode and shouldfail:
+      raise Exception(self.out)
+    return self
+
+  def Say(self, color, tabs, message):
+    template_args = (
+      color,
+      '  ' * tabs,
+      message,
+      NORMAL
+    )
+
+    sys.stdout.write('%s %s %s %s' % template_args)
+
+  def SayException(self):
+    self.Say(RED, 1, self.args[0])
+    self.Line()
+    for arg in self.args[1:]:
+      self.Say(RED, 2, arg)
+      self.Line()
+    print self.out
+    print self.err
+    self.Line(2)
+
+  def Line(self, num=1):
+    sys.stdout.write('\n' * num)
 
 def main():
   def GetArgs():
@@ -814,8 +886,9 @@ def main():
       fail_specs = []
       for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
         print 'running %s' % spec.relpath
-        status = subprocess.call(
-            [ os.path.join(planner.out_root, spec.relpath) ])
+        status = RubberDucky([
+          os.path.join(planner.out_root, spec.relpath)
+        ]).Process().returncode
         (pass_specs if status == 0 else fail_specs).append(spec)
       for name, specs in [
           (GREEN + 'passed' + NORMAL, pass_specs),
