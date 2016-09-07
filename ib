@@ -124,6 +124,15 @@ class ExeSpec(Spec):
   OTHER_EXTS = [ '.js' ]
 
 
+class SoSpec(Spec):
+  def __init__(self, *args, **kwargs):
+    super(SoSpec, self).__init__(*args, **kwargs)
+
+  PREFIX = ''
+  DEFAULT_EXT = '.so'
+  OTHER_EXTS = []
+
+
 class HdrSpec(Spec):
   def __init__(self, *args, **kwargs):
     super(HdrSpec, self).__init__(*args, **kwargs)
@@ -229,6 +238,10 @@ class LinkerJob(Job):
   def __init__(self, *args, **kwargs):
     super(LinkerJob, self).__init__(*args, **kwargs)
 
+  @property
+  def extra_link_opts(self):
+    return []
+
   def GetRule(self, planner):
     plans = set()
     planner.GetPlan(self.input_spec).ExtendPlans(planner, plans)
@@ -237,22 +250,45 @@ class LinkerJob(Job):
       if type(plan.output_spec) is ObjSpec:
         rule.dependencies.add(plan.GetOutputAbspath(planner))
     rule.AppendToRecipe(
-        [ planner.cfg.link.tool ] + planner.cfg.link.flags +
+        [ planner.cfg.link.tool ] +
+        self.extra_link_opts +
+        planner.cfg.link.flags +
         [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
         [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
         [ '-l' + lib for lib in planner.cfg.link.libs ] +
         [ '-Wl,-Bstatic' ] +
         [ '-l' + lib for lib in planner.cfg.link.static_libs ] +
         [ '-Wl,-Bdynamic' ])
+    return rule
+
+  VERB = 'link'
+  INPUT_SPEC_TYPE = ObjSpec
+
+
+class ExeJob(LinkerJob):
+  def __init__(self, *args, **kwargs):
+    super(ExeJob, self).__init__(*args, **kwargs)
+
+  def GetRule(self, planner):
+    rule = super(ExeJob, self).GetRule(planner)
     # This is a temporary work-around for -main executables.
     # It should really backtrack from foo-main to foo-main.o properly.
     if rule.outputs[0].endswith("-main"):
       rule.AppendToRecipe([ "mv", rule.outputs[0], rule.outputs[0][:-5] ])
     return rule
 
-  VERB = 'link'
-  INPUT_SPEC_TYPE = ObjSpec
   OUTPUT_SPEC_TYPES = { 'exe': ExeSpec }
+
+
+class SoJob(LinkerJob):
+  def __init__(self, *args, **kwargs):
+    super(SoJob, self).__init__(*args, **kwargs)
+
+  @property
+  def extra_link_opts(self):
+    return [ '-shared', '-rdynamic' ]
+
+  OUTPUT_SPEC_TYPES = { 'so': SoSpec }
 
 
 class Producer(object):
@@ -276,6 +312,8 @@ def _InitJobTypes():
   global _PRODUCERS_BY_OUTPUT_SPEC_TYPE
   _PRODUCERS_BY_OUTPUT_SPEC_TYPE = {}
   for job_type in YieldSubtypes(Job):
+    if not hasattr(job_type, 'OUTPUT_SPEC_TYPES'):
+      continue
     for key, spec_type in job_type.OUTPUT_SPEC_TYPES.iteritems():
       _PRODUCERS_BY_OUTPUT_SPEC_TYPE.setdefault(spec_type, []).append(Producer(key, job_type))
 
