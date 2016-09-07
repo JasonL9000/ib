@@ -739,7 +739,7 @@ def main():
     cfg_root = '.'
     cfg = 'debug'
     parser = argparse.ArgumentParser(
-        description="An inntuitive builder of C++ projects. Version 0.4.1.")
+        description="An inntuitive builder of C++ projects. Version 0.6.0.")
     parser.add_argument(
         '--src_root', default=src_root,
         help="The root of source tree. If relative, this is path is relative "
