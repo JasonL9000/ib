@@ -18,6 +18,11 @@ import argparse, ast, os, platform, subprocess, tempfile, textwrap
 class IbError(Exception): pass
 
 
+def RaiseNiceley(exception, message):
+  print "\n".join([" ", message, " "])
+  raise exception
+
+
 def GetExt(path):
   _, ext = os.path.splitext(path)
   return ext
@@ -508,7 +513,15 @@ class Planner(object):
     hdrs = self.cached_hdrs.get(abspath)
     if hdrs is None:
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
-      output = subprocess.check_output(args)
+      output = None
+
+      try:
+        output = subprocess.check_output(args)
+      except OSError as err:
+        RaiseNiceley(
+          err,
+          "OS returned error while executing `" + " ".join(self.GetCcArgs()) + "`")
+
       output = output.split(':', 1)[1]
       output = output.replace('\\', ' ')
       hdrs = []
