@@ -70,7 +70,7 @@ class Spec(object):
     self.ext = ext
 
   def __repr__(self):
-    return 'Spec(branch=%r, atom=%r, ext=%r)' % (self.branch, self.atom, self.ext)
+    return '%s(branch=%r, atom=%r, ext=%r)' % (self.__class__.name, self.branch, self.atom, self.ext)
 
   def __eq__(self, other):
     return (
@@ -507,6 +507,17 @@ class Planner(object):
   def GetHdrs(self, abspath):
     hdrs = self.cached_hdrs.get(abspath)
     if hdrs is None:
+      spec = self.ConvAbspathToSpec(abspath)
+      spec.ext += ".ib_hdrs"
+      cache_path = os.path.join(self.out_root, spec.relpath)
+      try:
+        with open(cache_path) as f:
+          for line in f:
+            hdrs.append(self.ConvRelpathToSpec(line))
+        self.cached_hdrs[abspath] = hdrs
+      except:
+        hdrs = None
+    if hdrs is None:
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
       output = subprocess.check_output(args)
       output = output.split(':', 1)[1]
@@ -518,6 +529,12 @@ class Planner(object):
           hdrs.append(spec)
       hdrs = hdrs[1:]
       self.cached_hdrs[abspath] = hdrs
+      cache_dir = os.path.dirname(cache_path)
+      if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+      with open(cache_path, 'w') as f:
+        for hdr in hdrs:
+          f.write('%s\n' % hdr.relpath)
     return hdrs
 
   def GetJob(self, job_type, input_spec):
@@ -739,7 +756,7 @@ def main():
     cfg_root = '.'
     cfg = 'debug'
     parser = argparse.ArgumentParser(
-        description="An inntuitive builder of C++ projects. Version 0.6.0.")
+        description="An inntuitive builder of C++ projects. Version 0.7.0.")
     parser.add_argument(
         '--src_root', default=src_root,
         help="The root of source tree. If relative, this is path is relative "
@@ -868,6 +885,9 @@ def main():
     for line in textwrap.wrap(str(err)):
       print '  ' + line
     return -1
+  except subprocess.CalledProcessError, err:
+    print ('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
+        (err.cmd, err.output, err.returncode))
 
 
 if __name__ == '__main__':
