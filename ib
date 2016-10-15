@@ -18,6 +18,11 @@ import argparse, ast, os, platform, subprocess, tempfile, textwrap
 class IbError(Exception): pass
 
 
+def RaiseNiceley(exception, message):
+  print "\n".join([" ", message, " "])
+  raise exception
+
+
 def GetExt(path):
   _, ext = os.path.splitext(path)
   return ext
@@ -256,9 +261,9 @@ class LinkerJob(Job):
         [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
         [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
         [ '-l' + lib for lib in planner.cfg.link.libs ] +
-        [ '-Wl,-Bstatic' ] +
+        ([ '-Wl,-Bstatic' ] if platform.system() != 'Darwin' else []) +
         [ '-l' + lib for lib in planner.cfg.link.static_libs ] +
-        [ '-Wl,-Bdynamic' ])
+        ([ '-Wl,-Bdynamic' ] if platform.system() != 'Darwin' else []))
     return rule
 
   VERB = 'link'
@@ -519,7 +524,15 @@ class Planner(object):
         hdrs = None
     if hdrs is None:
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
-      output = subprocess.check_output(args)
+      output = None
+
+      try:
+        output = subprocess.check_output(args)
+      except OSError as err:
+        RaiseNiceley(
+          err,
+          "OS returned error while executing `" + " ".join(self.GetCcArgs()) + "`")
+
       output = output.split(':', 1)[1]
       output = output.replace('\\', ' ')
       hdrs = []
