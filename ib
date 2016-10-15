@@ -256,9 +256,9 @@ class LinkerJob(Job):
         [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
         [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
         [ '-l' + lib for lib in planner.cfg.link.libs ] +
-        [ '-Wl,-Bstatic' ] +
+        ([ '-Wl,-Bstatic' ] if platform.system() != 'Darwin' else []) +
         [ '-l' + lib for lib in planner.cfg.link.static_libs ] +
-        [ '-Wl,-Bdynamic' ])
+        ([ '-Wl,-Bdynamic' ] if platform.system() != 'Darwin' else []))
     return rule
 
   VERB = 'link'
