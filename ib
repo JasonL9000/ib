@@ -121,7 +121,7 @@ class ExeSpec(Spec):
 
   PREFIX = ''
   DEFAULT_EXT = ''
-  OTHER_EXTS = [ '.js' ]
+  OTHER_EXTS = [ '.js', '.html' ]
 
 
 class SoSpec(Spec):
