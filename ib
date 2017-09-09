@@ -12,7 +12,7 @@
 # limitations under the License.
 
 
-import argparse, ast, os, platform, subprocess, tempfile, textwrap
+import argparse, ast, errno, os, platform, subprocess, tempfile, textwrap, re
 
 
 class IbError(Exception): pass
@@ -26,6 +26,26 @@ def GetExt(path):
 def ReplaceExt(path, new_ext):
   head, _ = os.path.splitext(path)
   return head + new_ext
+
+
+def TryGetStamp(path):
+  "Return the last-changed time of a file, or None if the file doesn't exist."
+  try:
+    return os.path.getmtime(path)
+  except OSError as e:
+    if e.errno == errno.ENOENT:
+      return None
+    raise e
+
+
+def UnlinkIfExists(path):
+  try:
+    os.unlink(path)
+    return True
+  except OSError as e:
+    if e.errno == errno.ENOENT:
+      return False
+    raise e
 
 
 def YieldSubtypes(base_type):
@@ -65,9 +85,17 @@ class Rule(object):
 class Spec(object):
   def __init__(self, branch, atom, ext):
     super(Spec, self).__init__()
+    while True:
+      higher_branch, name = os.path.split(branch)
+      if name != '.':
+        break
+      branch = higher_branch
     self.branch = branch
     self.atom = atom
     self.ext = ext
+
+  def __repr__(self):
+    return '%s(branch=%r, atom=%r, ext=%r)' % (type(self).__name__, self.branch, self.atom, self.ext)
 
   def __eq__(self, other):
     return (
@@ -121,13 +149,22 @@ class ExeSpec(Spec):
   OTHER_EXTS = [ '.js' ]
 
 
+class SoSpec(Spec):
+  def __init__(self, *args, **kwargs):
+    super(SoSpec, self).__init__(*args, **kwargs)
+
+  PREFIX = ''
+  DEFAULT_EXT = '.so'
+  OTHER_EXTS = []
+
+
 class HdrSpec(Spec):
   def __init__(self, *args, **kwargs):
     super(HdrSpec, self).__init__(*args, **kwargs)
 
   PREFIX = ''
   DEFAULT_EXT = '.h'
-  OTHER_EXTS = [ '.hpp', '.hh', '.hxx', '.inl' ]
+  OTHER_EXTS = [ '.hpp', '.hh', '.hxx', '.inl', '.ipp', '.fwd' ]
 
 
 class ObjSpec(Spec):
@@ -226,6 +263,10 @@ class LinkerJob(Job):
   def __init__(self, *args, **kwargs):
     super(LinkerJob, self).__init__(*args, **kwargs)
 
+  @property
+  def extra_link_opts(self):
+    return []
+
   def GetRule(self, planner):
     plans = set()
     planner.GetPlan(self.input_spec).ExtendPlans(planner, plans)
@@ -234,19 +275,45 @@ class LinkerJob(Job):
       if type(plan.output_spec) is ObjSpec:
         rule.dependencies.add(plan.GetOutputAbspath(planner))
     rule.AppendToRecipe(
-        [ planner.cfg.link.tool ] + planner.cfg.link.flags +
+        [ planner.cfg.link.tool ] +
+        self.extra_link_opts +
+        planner.cfg.link.flags +
         [ '-o ' + rule.outputs[0] ] + list(rule.dependencies) +
         [ '-L' + lib_dir for lib_dir in planner.cfg.link.lib_dirs ] +
+        [ '-Wl,-Bstatic' ] +
+        [ '-l' + lib for lib in planner.cfg.link.static_libs ] +
+        [ '-Wl,-Bdynamic' ] +
         [ '-l' + lib for lib in planner.cfg.link.libs ])
+    return rule
+
+  VERB = 'link'
+  INPUT_SPEC_TYPE = ObjSpec
+
+
+class ExeJob(LinkerJob):
+  def __init__(self, *args, **kwargs):
+    super(ExeJob, self).__init__(*args, **kwargs)
+
+  def GetRule(self, planner):
+    rule = super(ExeJob, self).GetRule(planner)
     # This is a temporary work-around for -main executables.
     # It should really backtrack from foo-main to foo-main.o properly.
     if rule.outputs[0].endswith("-main"):
       rule.AppendToRecipe([ "mv", rule.outputs[0], rule.outputs[0][:-5] ])
     return rule
 
-  VERB = 'link'
-  INPUT_SPEC_TYPE = ObjSpec
   OUTPUT_SPEC_TYPES = { 'exe': ExeSpec }
+
+
+class SoJob(LinkerJob):
+  def __init__(self, *args, **kwargs):
+    super(SoJob, self).__init__(*args, **kwargs)
+
+  @property
+  def extra_link_opts(self):
+    return [ '-shared', '-rdynamic' ]
+
+  OUTPUT_SPEC_TYPES = { 'so': SoSpec }
 
 
 class Producer(object):
@@ -270,6 +337,8 @@ def _InitJobTypes():
   global _PRODUCERS_BY_OUTPUT_SPEC_TYPE
   _PRODUCERS_BY_OUTPUT_SPEC_TYPE = {}
   for job_type in YieldSubtypes(Job):
+    if not hasattr(job_type, 'OUTPUT_SPEC_TYPES'):
+      continue
     for key, spec_type in job_type.OUTPUT_SPEC_TYPES.iteritems():
       _PRODUCERS_BY_OUTPUT_SPEC_TYPE.setdefault(spec_type, []).append(Producer(key, job_type))
 
@@ -463,8 +532,51 @@ class Planner(object):
   def GetHdrs(self, abspath):
     hdrs = self.cached_hdrs.get(abspath)
     if hdrs is None:
+      # We haven't cached (in memory) the headers for this source yet, so
+      # we'll see if there's a current header cache file ('.ib_hdrs') for this
+      # source in the output tree.
+      source_stamp = os.path.getmtime(abspath)
+      spec = self.ConvAbspathToSpec(abspath)
+      spec.ext += ".ib_hdrs"
+      cache_path = os.path.join(self.out_root, spec.relpath)
+      cache_stamp = TryGetStamp(cache_path)
+      if cache_stamp and cache_stamp >= source_stamp:
+        # There is a header cache and it is itself as new or newer than this
+        # source.  However, if any of the header files it lists have been
+        # recently changed, we'll have to discard the cache.
+        hdrs = []
+        with open(cache_path) as f:
+          # Each line in the cache file is a relpath to a header.  Read it
+          # line by line, converting each to an instance of HdrSpec, collecting
+          # these instances as our in-memory cache.  We'll check the stamps as
+          # we go.
+          for line in f:
+            hdr_spec = self.ConvRelpathToSpec(line.strip())
+            hdr_stamp, _ = self.TryGetSpecStamp(hdr_spec)
+            if not hdr_stamp or cache_stamp < hdr_stamp:
+              # The header either doesn't exist or is newer than the cache.
+              # Either way, we need to discard the cache.
+              hdrs = None
+              break
+            hdrs.append(hdr_spec)
+          else:
+            # The cache is fresh.  We'll use it from now on.
+            self.cached_hdrs[abspath] = hdrs
+    if hdrs is None:
+      # There's no cache or the cache is old.  Make sure the directory that
+      # will contain the cache exists, but delete the cache file, if there is
+      # one.
+      cache_dir = os.path.dirname(cache_path)
+      if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+      UnlinkIfExists(cache_path)
+      # Perform the -MM scan of the source to get the headers.
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
       output = subprocess.check_output(args)
+      # The headers come back in make-friendly format, which is actually a
+      # pretty awful format.  Parse it apart and turn each header into an
+      # instance of HdrSpec.  The list of those instances will be our in-
+      # memory cache.
       output = output.split(':', 1)[1]
       output = output.replace('\\', ' ')
       hdrs = []
@@ -474,6 +586,10 @@ class Planner(object):
           hdrs.append(spec)
       hdrs = hdrs[1:]
       self.cached_hdrs[abspath] = hdrs
+      # Write the cache to disk for future reference.
+      with open(cache_path, 'w') as f:
+        for hdr in hdrs:
+          f.write('%s\n' % hdr.relpath)
     return hdrs
 
   def GetJob(self, job_type, input_spec):
@@ -528,6 +644,14 @@ class Planner(object):
     relpath = self.TryConvAbspathToRelpath(abspath)
     return self.ConvRelpathToSpec(relpath) if relpath is not None else None
 
+  def TryGetSpecStamp(self, spec):
+    for root in [ self.out_root, self.src_root ]:
+      path = os.path.join(root, spec.relpath)
+      stamp = TryGetStamp(path)
+      if stamp:
+        return stamp, path
+    return None, None
+
   def YieldWaves(self, output_specs):
     for spec in output_specs:
       plan = self.GetPlan(spec)
@@ -577,14 +701,28 @@ class Planner(object):
 class Cfg(object):
   "A configuration object."
 
-  def __init__(self, root, name, base=None):
+  def __init__(self, roots, name, src_root, base=None):
     super(Cfg, self).__init__()
     self.Obj = Obj
     self.os = os
     self.platform = platform
+
+    if os.environ.has_key('EXT_DEPENDENCIES_ROOT'):
+      self.dependencies_root = os.environ['EXT_DEPENDENCIES_ROOT']
+    else:
+      self.dependencies_root = src_root
+
+
     if base is not None:
       self.__dict__.update(base.__dict__)
-    imports = self.__Update(root, name, conv_dots=base is None)
+
+    if ',' not in name:
+      imports = self.__Update(roots, name, conv_dots=base is None)
+    else:
+      imports = []
+      for top_level_cfg in name.split(','):
+        imports.append(Import(top_level_cfg, self.__Update(roots, top_level_cfg, conv_dots=base is None)))
+
     del self.__dict__['__builtins__']
     del self.Obj
     self.cfg = Obj(name=name, base=base.cfg if base else None, imports=imports)
@@ -594,11 +732,13 @@ class Cfg(object):
         if not hasattr(obj, field_name):
           setattr(obj, field_name, [])
 
+
+
   def __repr__(self):
     def Comment(cfg, label):
       return '# %s: %s%s' % (label, cfg.name, ExpandImports(cfg.imports))
     def ExpandImports(imports):
-      return ' (imports %s)' % ', '.join('%s%s' % (name, ExpandImports(nested_imports)) for name, nested_imports in imports.iteritems()) if imports else ''
+      return ' (imports %s)' % ', '.join('%s%s' % (nested_import.name, ExpandImports(nested_import.imports)) for nested_import in imports) if imports else ''
     def Lines():
       cfg = self.cfg
       label = 'name'
@@ -615,30 +755,47 @@ class Cfg(object):
     def Check(cfg):
       return cfg.name == some_name or CheckImports(cfg.imports) or (Check(cfg.base) if cfg.base is not None else False)
     def CheckImports(imports):
-      return any(name == some_name or CheckImports(nested_imports) for name, nested_imports in imports.iteritems())
+      return any(nested_import.name == some_name or CheckImports(nested_import.imports) for nested_import in imports)
     return Check(self.cfg)
 
-  def __Update(self, root, name, conv_dots=True):
-    filename = os.path.join(root, *(name.split('.') if conv_dots else [ name ])) + '.cfg'
-    if not os.path.isfile(filename):
+  def __Update(self, roots, name, conv_dots=True):
+    filenames = [ (os.path.join(root, *(name.split('.') if conv_dots else [ name ])) + '.cfg') for root in roots ];
+
+    selected_filename = None;
+    for filename in filenames:
+      if os.path.isfile(filename):
+        selected_filename = filename;
+        break;
+
+    if (selected_filename == None):
       raise IbError(
-          "You are trying to build the %r configuration in %r; "
-          "however, the file %r does not exist." % (name, root, filename))
-    with open(filename) as f:
+          "ib was looking for one of %r; "
+          "however, none of those file exist." % (filenames))
+
+    with open(selected_filename) as f:
       text = f.read()
     scout = Scout()
     for stmt in ast.parse(text, filename=filename).body:
       scout.visit(stmt)
-    imports = {}
-    for name in scout.imports:
-      imports[name] = self.__Update(root, name)
+    imports = []
+    for import_name in scout.imports:
+      imports.append(Import(import_name, self.__Update(roots, import_name)))
     exec compile(ast.Module(body=scout.stmts), filename, mode='exec') in self.__dict__
     return imports
 
   DEFAULT_EMPTY_LISTS = {
     'cc':   [ 'incl_dirs' ],
-    'link': [ 'libs', 'lib_dirs' ]
+    'link': [ 'libs', 'static_libs', 'lib_dirs' ]
   }
+
+
+class Import():
+  "A tuple containing the name of an import plus a list of any nested Imports inside it"
+
+  def __init__(self, name, imports):
+    self.name = name
+    self.imports = imports
+
 
 class Obj(object):
   "A generic object made up of the keyword args passed to its initializer."
@@ -677,9 +834,57 @@ class Scout(ast.NodeVisitor):
 
 LABEL_FILE = '__ib__'
 
+RED = '\x1b[1;31m'
+GREEN = '\x1b[1;32m'
+NORMAL = '\x1b[0m'
+
 
 def main():
   def GetArgs():
+
+    # IB configuration requires three directories:
+    #      "src_root", "out_root", "cfg_root".
+    #
+    #  src_root is where the sources files are rooted,
+    #     it tells IB how to resolve paths in #include lines.
+    #     If specified it can be relative to the currentdir,
+    #     but if unspecified we'll look UPWARD from the currentdir
+    #     and stop at the first directory with a "__ib__" file in it.
+    #
+    #     In our codebase the only "__ib__" file is in the edgestack
+    #     "native" directory, which is the correct "src_root"
+    #     for FOGHORN builds.   If you're invoking IB from anywhere
+    #     within the native/foghorn directory, --src_root should never
+    #     be necessary.
+    #
+    #  out_root is a basedir for where the object files are put,
+    #     and if relative it's relative to the source dir.
+    #     But cfg is automatically appended to it, with any commas
+    #     (if cfg is a comma-separated list) automatically turned
+    #     into underbars.  for example, if one calls:
+    #
+    #     ib --cfg=gcc_debug,shared
+    #        --out_root=foghorn/FOO/build/ib
+    #        foghorn/FOO/fooMain
+    #
+    #     then ib will try to compile "foghorn/FOO/fooMain.cpp" and create
+    #     "foghorn/FOO/build/ib/gcc_debug_shared/foghorn/FOO/fooMain.o"
+    #
+    #  cfg_root provides a second directory for .cfg files in addition
+    #     to the "src_root".  In our codebase, most .cfg files are in the
+    #     "src_root", the edgestack "native" directory.  But if your project
+    #     has project-specific configuration requirements, you can put
+    #     extra cfg files in a project-specific directory.  For example,
+    #     if a "cfg_root" parameter is added to the above command:
+    #
+    #     ib --cfg=gcc_debug,shared
+    #        --cfg_root=foghorn/FOO
+    #        --out_root=foghorn/FOO/build/ib
+    #        foghorn/FOO/fooMain
+    #
+    #     then ib will look for .cfg files in "foghorn/FOO" first,
+    #     as well as the "src_root".
+
     src_root = os.getcwd()
     while src_root != '/':
       if os.path.exists(os.path.join(src_root, LABEL_FILE)):
@@ -687,14 +892,15 @@ def main():
       src_root = os.path.dirname(src_root)
     else:
       src_root = ''
+
     out_root = '../out'
     cfg_root = '.'
-    cfg = 'debug'
+    cfg = 'gcc_debug'
     parser = argparse.ArgumentParser(
-        description="An intuitive builder of C++ projects. Version 0.2.1.")
+        description="An intuitive builder of C++ projects. Version 0.7.7.")
     parser.add_argument(
         '--src_root', default=src_root,
-        help="The root of source tree. If relative, this is path is relative "
+        help="The root of source tree. If relative, this path is relative "
              "to the current directory. If not given, the default is set by "
              "searching upward from the current directory for the first "
              "directory containing a file called %r. The default is currently "
@@ -705,15 +911,23 @@ def main():
              "to the root of the source tree. The default is %r." % out_root)
     parser.add_argument(
         '--cfg_root', default=cfg_root,
-        help="The root of output tree. If relative, this path is relative to "
-             "the root of the source tree. The default is %r." % cfg_root)
+        help="Any .cfg files found in this directory will override"
+             "equivalently named .cfg files in the \"src_root\" directory. "
+             "The default is %r." % cfg_root)
     parser.add_argument(
         '--cfg', default=cfg,
-        help="The configuration to build. The default is %r." % cfg)
+        help="Configuration file(s) to read.  May be a comma-separated list. "
+             "For each element foo of the comma-separated cfg-list, we will "
+             "look for \"foo.cfg\" first in the \"cfg_root\" directory, and "
+             "then in the \"src_root\" directory.   The default is \"%r\". "
+             "\n"
+             "The .cfg files consist of python assignment statements plus python "
+             "import statements, and are expected to define 'cc' and 'link' "
+             "objects with an assortment of particular fields filled in.")
     parser.add_argument(
         '--print_args', action='store_true',
         help="Print the arguments to the build, including the root "
-             "directory paths and the name of the configuration to be built.")
+             "directory paths and the configuration files to read.")
     parser.add_argument(
         '--print_cfg', action='store_true',
         help="Print the composited config object.")
@@ -731,11 +945,23 @@ def main():
              "date. Make sure to specify this option after you modify the "
              "contents of a relevant config file.")
     parser.add_argument(
+        '--test', action='store_true',
+        help="Run each unit test after building.")
+    parser.add_argument(
+        '--test_all', action='store_true',
+        help="Compile and run all the tests in the given subtree.")
+    parser.add_argument(
+        '--build_all', action='store_true',
+        help="Build all the executables in the given subtree.")
+    parser.add_argument(
+        '--ld', metavar='PATH',
+        help="Set the LD_LIBRARY_PATH environment variable when running tests.")
+    parser.add_argument(
         'targets', metavar='target', nargs='*',
         help="The spec of a target you want to build. If relative, the spec "
              "is relative to the current directory. If absolute, the spec is "
              "relative to the root of the source tree. (A spec is never truly "
-             "absolute.) If the current directory is not in the source tree "
+             "absolute.)  If the current directory is not in the source tree "
              "or the output tree, then you must give only absolute specs. The "
              "target will be built in the output tree.")
     return parser.parse_args()
@@ -759,33 +985,68 @@ def main():
     args.cfg_root = MakeAbspath(args.src_root, args.cfg_root)
     if not os.path.isdir(args.cfg_root):
       raise IbError(
-          "You are trying to use %r as the root of the config tree; however, "
+          "You are trying to use %r as a directory with config files; however, "
           "it either doesn't exist or is not a directory." % args.cfg_root)
     args.out_root = MakeAbspath(
-        args.src_root, os.path.join(args.out_root, args.cfg))
+        args.src_root, os.path.join(args.out_root, args.cfg.replace(',','_')))
     if args.print_args:
       for key in [ 'src_root', 'out_root', 'cfg_root', 'cfg' ]:
         print '%s = %r' % (key, getattr(args, key))
-    cfg = Cfg(args.cfg_root, args.cfg)
+    cfg = Cfg([args.cfg_root, args.src_root], args.cfg, args.src_root)
     if args.print_cfg:
       print cfg
     planner = Planner(
         cfg=cfg,
         src_root=args.src_root,
         out_root=args.out_root)
-    specs = [ planner.ConvTargetToSpec(target) for target in args.targets ]
+    targets = []
+    if args.test_all or args.build_all:
+      for target in args.targets:
+        for root, _, filenames in os.walk(target):
+          for filename in filenames:
+            if filename.endswith('-test.cc'):
+              targets.append(os.path.join(root, filename[:len(filename) - 3]))
+    else:
+      targets = args.targets
+    success = True
+    specs = [ planner.ConvTargetToSpec(target) for target in targets ]
     for wave_number, wave in enumerate(planner.YieldWaves(specs), start=1):
       script = planner.ConvWaveToScript(wave)
       if args.print_script:
         print '# wave %d\n%s' % (wave_number, script)
-      if not args.no_run and not planner.RunScript(script, force=args.force):
+      if args.no_run:
+        return 0
+      if not planner.RunScript(script, force=args.force):
+        success = False
         break
-    return 0
+    if success and (args.test_all or args.test):
+      env = dict(os.environ)
+      if args.ld:
+        env['LD_LIBRARY_PATH'] = args.ld
+      pass_specs = []
+      fail_specs = []
+      for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
+        print 'running %s' % spec.relpath
+        status = subprocess.call(
+            [ os.path.join(planner.out_root, spec.relpath) ],
+            shell=True, env=env)
+        (pass_specs if status == 0 else fail_specs).append(spec)
+      for name, specs in [
+          (GREEN + 'passed' + NORMAL, pass_specs),
+          (RED + 'failed' + NORMAL, fail_specs) ]:
+        if specs:
+          print '%s %d (%s)' % (
+              name, len(specs), ', '.join(spec.relpath for spec in specs))
+      success = not fail_specs
+    return 0 if success else -1
   except IbError, err:
     print '** ib error **'
     for line in textwrap.wrap(str(err)):
       print '  ' + line
     return -1
+  except subprocess.CalledProcessError, err:
+    print ('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
+        (err.cmd, err.output, err.returncode))
 
 
 if __name__ == '__main__':
