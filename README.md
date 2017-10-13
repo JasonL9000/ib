@@ -151,3 +151,20 @@ cd <project-directory>
 #### Configuring with many flags
 
 Please note that `release.cfg` and `debug.cfg` both inherit `common.cfg`. This is helpful when projects have many flags. Example configuration files are located [here](https://github.com/JasonL9000/ib)
+
+#### Recipe For Windows
+
+For some devs, windows has always been a headache for those who are not familiar with Visual Studio IDE. It is possible to use `ib` on windows computers using the following software. Have a look a `win-common.cfg`.
+
+- Install python to the usual place on windows `C:\Python27`
+- Install [Visual Studio 2017 Community](https://www.visualstudio.com/downloads/) from Microsoft website
+- When installing visual studio, make sure to check the box for adding ClangC2 Toolchain
+- Install [Make for windows](http://gnuwin32.sourceforge.net/packages/make.htm) From Gnu website
+- Install [Git for windows](https://git-scm.com/downloads) from Git website
+- Install ib to an easy to a familiar place, I used `C:\ib`
+- Open the environment variables dialog by pressing windows key and typing `Environment Variables`
+- Add python to your PATH variable: `C:\Python27`
+- Add clang.exe to your PATH variable: `C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Tools\ClangC2\14.10.25903\bin\HostX64` This might be different on some versions of visual studio
+- Add ib to your PATH variable `C:\ib`
+- Open the visual studio developer command prompt, located in the start menu under Visual Studio
+- Copy the win-common.cfg to your project and use it `ib --cfg win-common example.cc` :)
