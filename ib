@@ -502,8 +502,8 @@ class Planner(object):
   def GetCcArgs(self):
     return [ self.cfg.cc.tool, '-I' + self.src_root, '-I' + self.out_root ]  \
         + [ '-I' + incl_dir for incl_dir in self.cfg.cc.incl_dirs ]  \
-        + [ '-DIB_SRC_ROOT=' + self.src_root,
-            '-DIB_OUT_ROOT=' + self.out_root ]  \
+        + [ '-DIB_SRC_ROOT=' + self.src_root.replace('\\', '\\\\'),
+            '-DIB_OUT_ROOT=' + self.out_root.replace('\\', '\\\\') ]  \
         + self.cfg.cc.flags
 
   def GetHdrs(self, abspath):
@@ -523,7 +523,7 @@ class Planner(object):
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
       output = subprocess.check_output(args)
       output = output.split(':', 1)[1]
-      output = output.replace('\\', ' ')
+      output = output.replace('\\\n', ' ')
       hdrs = []
       for line in output.split():
         spec = self.TryConvAbspathToSpec(line.strip())
@@ -755,7 +755,7 @@ def main():
     else:
       src_root = ''
     out_root = '../out'
-    cfg_root = '.'
+    cfg_root = ''
     cfg = 'debug'
     parser = argparse.ArgumentParser(
         description="An inntuitive builder of C++ projects. Version 0.7.1.")
@@ -773,7 +773,7 @@ def main():
     parser.add_argument(
         '--cfg_root', default=cfg_root,
         help="The root of output tree. If relative, this path is relative to "
-             "the root of the source tree. The default is %r." % cfg_root)
+             "the root of the source tree. The default is '.'.")
     parser.add_argument(
         '--cfg', default=cfg,
         help="The configuration to build. The default is %r." % cfg)
@@ -829,13 +829,19 @@ def main():
       raise IbError(
           "You are trying to use %r as the root of the source tree; however, "
           "it either doesn't exist or is not a directory." % args.src_root)
-    args.cfg_root = MakeAbspath(args.src_root, args.cfg_root)
-    if not os.path.isdir(args.cfg_root):
-      raise IbError(
-          "You are trying to use %r as the root of the config tree; however, "
-          "it either doesn't exist or is not a directory." % args.cfg_root)
+    if args.cfg_root:
+      args.cfg_root = MakeAbspath(args.src_root, args.cfg_root)
+      if not os.path.isdir(args.cfg_root):
+        raise IbError(
+            "You are trying to use %r as the root of the config tree; however, "
+            "it either doesn't exist or is not a directory." % args.cfg_root)
+    elif not args.cfg_root and os.path.dirname(args.cfg) != args.src_root:
+      args.cfg_root = os.path.dirname(args.cfg)
+    else:
+      args.cfg_root = args.src_root
     args.out_root = MakeAbspath(
         args.src_root, os.path.join(args.out_root, args.cfg))
+    args.cfg = os.path.basename(args.cfg)
     if args.print_args:
       for key in [ 'src_root', 'out_root', 'cfg_root', 'cfg' ]:
         print '%s = %r' % (key, getattr(args, key))

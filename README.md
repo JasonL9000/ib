@@ -150,7 +150,7 @@ cd <project-directory>
 
 #### Configuring with many flags
 
-Please note that `release.cfg` and `debug.cfg` both inherit `common.cfg`. This is helpful when projects have many flags. Example configuration files are located [here](https://github.com/JasonL9000/ib)
+Please note that `release.cfg` and `debug.cfg` both inherit `common.cfg`. This is helpful when projects have many flags. Example configuration files are located [here](https://github.com/JasonL9000/ib/tree/master/cfgs)
 
 #### Recipe For Windows
 
