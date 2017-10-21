@@ -24,6 +24,7 @@ for cfg_name in $WIN_CONFIGS; do
   echo "building $cfg_name"
   ib --cfg cfgs/$cfg_name examples/hello.exe $@
   ib --cfg cfgs/$cfg_name examples/basic.exe $@
-  ib --cfg cfgs/$cfg_name examples/mingw_win_hello.exe $@
+  ib --cfg cfgs/$cfg_name examples/win_hello.exe $@
+  ib --cfg cfgs/$cfg_name examples/win_opengl.exe $@
 done
 echo "built to ../out"

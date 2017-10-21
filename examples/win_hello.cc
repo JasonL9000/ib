@@ -5,7 +5,6 @@
 #include <iostream>
 #include <cstdint>
 
-
 using namespace std;
 
 static TCHAR szWindowClass[] = _T("win32app");
@@ -43,15 +42,13 @@ int CALLBACK WinMain(
   wcex.cbClsExtra     = 0;
   wcex.cbWndExtra     = 0;
   wcex.hInstance      = hInstance;
-  wcex.hIcon          = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APPLICATION));
   wcex.hCursor        = LoadCursor(NULL, IDC_ARROW);
   wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
   wcex.lpszMenuName   = NULL;
   wcex.lpszClassName  = szWindowClass;
-  wcex.hIconSm        = LoadIcon(wcex.hInstance, MAKEINTRESOURCE(IDI_APPLICATION));
 
   if (!RegisterClassEx(&wcex)) {
-    MessageBox(NULL, _T("Call to RegisterClassEx failed!"), _T("Win32 Guided Tour"), NULL);
+    MessageBox(0, _T("Call to RegisterClassEx failed!"), _T("Win32 Guided Tour"), 0);
     return 1;
   }
 
@@ -71,10 +68,10 @@ int CALLBACK WinMain(
 
   if (!hWnd) {
     MessageBox(
-      NULL,
+      0,
       _T("Call to CreateWindow failed!"),
       _T("Win32 Guided Tour"),
-      NULL
+      0
     );
 
     return 1;
