@@ -46,6 +46,8 @@ int CALLBACK WinMain(
   wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
   wcex.lpszMenuName   = NULL;
   wcex.lpszClassName  = szWindowClass;
+  wcex.hIcon          = 0;
+  wcex.hIconSm        = 0;
 
   if (!RegisterClassEx(&wcex)) {
     MessageBox(0, _T("Call to RegisterClassEx failed!"), _T("Win32 Guided Tour"), 0);
