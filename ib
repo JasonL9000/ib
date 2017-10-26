@@ -112,7 +112,7 @@ class CppSpec(Spec):
 
   PREFIX = ''
   DEFAULT_EXT = '.cc'
-  OTHER_EXTS = [ '.c', '.cpp', '.cxx' ]
+  OTHER_EXTS = [ '.c', '.cpp', '.cxx', '.mm', '.m' ]
 
 
 class ExeSpec(Spec):
