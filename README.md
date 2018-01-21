@@ -168,3 +168,24 @@ For some devs, windows has always been a headache for those who are not familiar
 - Add ib to your PATH variable `C:\ib`
 - Open the visual studio developer command prompt, located in the start menu under Visual Studio
 - Copy the win-common.cfg to your project and use it `ib --cfg win-common example.cc` :)
+
+## Running the Tests
+
+The easiest way to run the tests is to install docker and run it inside there.
+
+#### If you're using docker
+
+- Install Docker
+- Execute `./scripts/run_tests_in_docker.sh`
+
+#### If you don't want to use docker
+
+- Install python 2 or 3
+- Install pip
+- Execute `./scripts/run_tests.sh`
+
+#### If you want to watch file for changes and auto rerun tests
+
+- Install python 2 or 3
+- Install pip
+- Execute `./scripts/run_tests_watcher.sh`
