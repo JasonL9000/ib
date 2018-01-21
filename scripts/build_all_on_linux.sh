@@ -1,3 +1,5 @@
+DIR=$(cd $(dirname "${BASH_SOURCE[0]}") && pwd)
+
 CONFIGS="\
   clang_debug \
   clang_asan \
