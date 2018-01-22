@@ -75,7 +75,8 @@ class Spec(object):
     self.ext = ext
 
   def __repr__(self):
-    return '%s(branch=%r, atom=%r, ext=%r)' % (self.__class__.name, self.branch, self.atom, self.ext)
+    return '%s(branch=%r, atom=%r, ext=%r)' % (
+      self.__class__.__name__,self.branch, self.atom, self.ext)
 
   def __eq__(self, other):
     return (
@@ -198,8 +199,11 @@ class Job(object):
     return '%s %s -> %s' % (
         type(self).VERB,
         self.input_spec.relpath,
-        ', '.join(self.GetOutputSpec(key).relpath
-                  for key in type(self).OUTPUT_SPEC_TYPES.keys()))
+        ', '.join(spec.relpath for spec in self.GetAllOutputSpecs()))
+
+  def GetAllOutputSpecs(self):
+    keys = type(self).OUTPUT_SPEC_TYPES.keys()
+    return [self.GetOutputSpec(key) for key in keys]
 
   def GetOutputSpec(self, key):
     return self.explicit_output_specs.get(
@@ -217,6 +221,21 @@ class Job(object):
       [ planner.GetPlan(self.GetOutputSpec(key)).GetOutputAbspath(planner)
         for key in type(self).OUTPUT_SPEC_TYPES ])
 
+  def Print(self, planner):
+    print('----------------------')
+    print('inputs:')
+    input_plan = planner.GetPlan(self.input_spec)
+    input_abs = input_plan.GetOutputAbspath(planner)
+    print('  ' + input_abs)
+
+    print('outputs:')
+    for spec in self.GetAllOutputSpecs():
+      out_plan = planner.GetPlan(spec)
+      print('  ' + out_plan.GetOutputAbspath(planner))
+
+    print('deps:')
+    for dep in self.GetRule(planner).dependencies:
+      print('  ' + dep)
 
 class CompilerJob(Job):
   def __init__(self, *args, **kwargs):
@@ -496,12 +515,16 @@ class Planner(object):
   def ConvTargetToSpec(self, target):
     return self.ConvRelpathToSpec(self.ConvTargetToRelpath(target))
 
-  def ConvWaveToScript(self, wave):
+  def ConvWaveToRules(self, wave):
     rules = [ job.GetRule(self) for job in wave ]
     all_rule = Rule([ self.cfg.make.all_pseudo_target ])
     for rule in rules:
       all_rule.dependencies |= set(rule.outputs)
     rules.insert(0, all_rule)
+    return rules
+
+  def ConvWaveToScript(self, wave):
+    rules = self.ConvWaveToRules(wave)
     return '\n'.join(rule.script for rule in rules)
 
   def GetCcArgs(self):
@@ -585,6 +608,13 @@ class Planner(object):
           [ '-f' + name, self.cfg.make.all_pseudo_target ]) == 0
     finally:
       os.unlink(name)
+
+  def GetWaveSources(self, waves):
+    deps = set()
+    for wave in waves:
+      for job in wave:
+        deps |= job.GetRule(self).dependencies
+    return deps
 
   def TryConvAbspathToRelpath(self, abspath):
     for root in [ self.src_root, self.out_root ]:
