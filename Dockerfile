@@ -18,7 +18,7 @@ RUN apt install -y build-essential \
 RUN apt install -y python-setuptools python-dev
 RUN easy_install pip
 RUN pip install --upgrade virtualenv
-RUN pip install pytest pytest-xdist pytest-cov
+RUN pip install pytest pytest-xdist pytest-cov pyinotify
 
 RUN dpkg --add-architecture i386 && apt update && apt install -y wine32
 RUN wget https://github.com/robbyrussell/oh-my-zsh/raw/master/tools/install.sh -O - | zsh || true

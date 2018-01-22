@@ -16,7 +16,7 @@ import argparse, ast, os, platform, subprocess, tempfile, textwrap, glob
 inotify_exists = True
 
 try:
-  import inotify
+  import pyinotify
 except:
   inotify_exists = False
 
@@ -616,6 +616,31 @@ class Planner(object):
         deps |= job.GetRule(self).dependencies
     return deps
 
+  def WaitForChanges(self, waves):
+    if not inotify_exists:
+      raise Exception('inotify is not installed. run pip install pyinotify')
+    dirs = set([os.path.dirname(p) for p in self.GetWaveSources(waves)])
+
+    class Identity(pyinotify.ProcessEvent):
+      def process_default(self, event):
+          print('Not Implemented Yet')
+
+    def on_loop(notifier):
+      # notifier.proc_fun() is Identity's instance
+      s_inst = notifier.proc_fun().nested_pevent()
+      print(repr(s_inst), '\n', s_inst, '\n')
+      raise Exception('Not Implemented Yet')
+
+    wm = pyinotify.WatchManager()
+    # Stats is a subclass of ProcessEvent provided by pyinotify
+    # for computing basics statistics.
+    s = pyinotify.Stats()
+    notifier = pyinotify.Notifier(wm, default_proc_fun=Identity(s), read_freq=5)
+
+    for p in dirs:
+      wm.add_watch(p, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
+    notifier.loop(callback=on_loop)
+
   def TryConvAbspathToRelpath(self, abspath):
     for root in [ self.src_root, self.out_root ]:
       if abspath.startswith(root):
@@ -839,12 +864,6 @@ def main():
         '--test_all', action='store_true',
         help="Compile and run all the tests in the given subtree.")
     parser.add_argument(
-        '--target_ext', action='store_true',
-        help="Replace each target extensions with this one to change target "
-             "type. Can be used on globs for compiling multiple outputs. For "
-             "example, compiling several .cc files to dynamic libraries can be "
-             "dont using the following command: ib --target_ext .so *.cc")
-    parser.add_argument(
         '--watch', action='store_true',
         help="Watch all files used in a target and rebuild if any source files"
              "change. If there are no targets to watch, build will exit")
@@ -909,7 +928,8 @@ def main():
       targets = args.targets
     success = True
     specs = [ planner.ConvTargetToSpec(target) for target in targets ]
-    for wave_number, wave in enumerate(planner.YieldWaves(specs), start=1):
+    waves = list(planner.YieldWaves(specs))
+    for wave_number, wave in enumerate(waves, start=1):
       script = planner.ConvWaveToScript(wave)
       if args.print_script:
         print('# wave %d\n%s' % (wave_number, script))
@@ -933,6 +953,8 @@ def main():
           print('%s %d (%s)' % (
               name, len(specs), ', '.join(spec.relpath for spec in specs)))
       success = not fail_specs
+    if args.watch:
+      return planner.WaitForChanges(waves)
     return 0 if success else -1
   except IbError as err:
     print('** ib error **')

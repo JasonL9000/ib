@@ -155,5 +155,12 @@ class TestPlannerModel(unittest.TestCase):
       '/tmp/out/examples/hello_world/world.o'
     ], sorted(sources))
 
+  def test_wait_for_changes(self):
+    planner = get_planner(get_gcc_debug_cfg())
+    specs = get_specs(planner)
+    waves = list(planner.YieldWaves(specs))
+    invert_op = getattr(planner, "WaitForChanges", None)
+    self.assertTrue(callable(invert_op))
+
 if __name__ == '__main__':
   unittest.main()
