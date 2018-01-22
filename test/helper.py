@@ -16,3 +16,6 @@ cfg_gcc_release = path.join(cfgs_dir, 'gcc_release')
 target_basic = path.join(examples_dir, 'basic')
 target_hello = path.join(examples_dir, 'hello')
 target_win_hello = path.join(examples_dir, 'win_hello')
+
+# out
+out_root = '/tmp/out'

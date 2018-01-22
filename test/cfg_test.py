@@ -44,7 +44,8 @@ class TestCfgModel(unittest.TestCase):
   def test_cc_flags_property_on_gcc_debug_cfg(self):
     cfg = gcc_debug_subject()
     self.assertEqual(
-      [ '--std=c++14', '-x', 'c++', '-D', 'DEBUG', '-g', '-DDJ_ENABLE_ABORT_IF' ],
+      [ '--std=c++14', '-x', 'c++', '-fPIC', '-D', 'DEBUG', '-g',
+      '-DDJ_ENABLE_ABORT_IF' ],
       cfg.cc.flags
     )
 
@@ -102,7 +103,7 @@ class TestCfgModel(unittest.TestCase):
     cfg = clang_debug_subject()
     self.assertEqual(
       [
-        '--std=c++14', '-x', 'c++', '-Weverything', '-Wno-c++98-compat',
+        '--std=c++14', '-x', 'c++', '-fPIC', '-Weverything', '-Wno-c++98-compat',
         '-Wno-shadow', '-Wno-global-constructors', '-Wno-exit-time-destructors',
         '-Wno-padded', '-Wno-weak-vtables', '-D', 'DEBUG', '-g',
         '-DDJ_ENABLE_ABORT_IF'
