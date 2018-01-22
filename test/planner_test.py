@@ -117,9 +117,8 @@ class TestPlannerModel(unittest.TestCase):
 
     first_result = planner.RunScript(first_script)
     second_result = planner.RunScript(second_script)
-    print(first_result)
-    print(second_result)
-
+    self.assertEqual(first_result, True)
+    self.assertEqual(second_result, True)
 
 if __name__ == '__main__':
   unittest.main()
