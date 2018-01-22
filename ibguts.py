@@ -912,7 +912,3 @@ def main():
   except subprocess.CalledProcessError as err:
     print(('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
         (err.cmd, err.output, err.returncode)))
-
-
-if __name__ == '__main__':
-  exit(main())
