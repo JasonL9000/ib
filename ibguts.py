@@ -472,7 +472,7 @@ class NoPlan(UndoablePlan):
 # -----------------------------------------------------------------------------
 
 class Planner(object):
-  def __init__(self, cfg, src_root, out_root, targets, cwd=os.getcwd()):
+  def __init__(self, cfg, src_root, out_root, targets=None, cwd=os.getcwd()):
     self.cfg = cfg
     self.src_root = src_root
     self.out_root = out_root
