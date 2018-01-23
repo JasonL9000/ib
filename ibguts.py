@@ -613,7 +613,8 @@ class Planner(object):
     deps = set()
     for wave in waves:
       for job in wave:
-        deps |= job.GetRule(self).dependencies
+        all_deps = job.GetRule(self).dependencies
+        deps |= set(d for d in all_deps if not d.startswith(self.out_root))
     return deps
 
   def WaitForChanges(self, waves):

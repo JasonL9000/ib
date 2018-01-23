@@ -147,12 +147,7 @@ class TestPlannerModel(unittest.TestCase):
       path.join(helper.root_dir, 'examples/hello_world/hello.cc'),
       path.join(helper.root_dir, 'examples/hello_world/hello.h'),
       path.join(helper.root_dir, 'examples/hello_world/world.cc'),
-      path.join(helper.root_dir, 'examples/hello_world/world.h'),
-      '/tmp/out/examples/basic.o',
-      '/tmp/out/examples/hello.o',
-      '/tmp/out/examples/hello_world/follow_headers.o',
-      '/tmp/out/examples/hello_world/hello.o',
-      '/tmp/out/examples/hello_world/world.o'
+      path.join(helper.root_dir, 'examples/hello_world/world.h')
     ], sorted(sources))
 
   def test_wait_for_changes(self):
