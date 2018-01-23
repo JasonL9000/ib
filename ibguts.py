@@ -471,12 +471,12 @@ class NoPlan(UndoablePlan):
 
 # -----------------------------------------------------------------------------
 
-
 class Planner(object):
-  def __init__(self, cfg, src_root, out_root, cwd=os.getcwd()):
+  def __init__(self, cfg, src_root, out_root, targets, cwd=os.getcwd()):
     self.cfg = cfg
     self.src_root = src_root
     self.out_root = out_root
+    self.targets = targets
     self.branch = self.TryConvAbspathToRelpath(cwd)
     self.cached_jobs = {}
     self.cached_plans = {}
@@ -617,28 +617,93 @@ class Planner(object):
         deps |= set(d for d in all_deps if not d.startswith(self.out_root))
     return deps
 
-  def WaitForChanges(self, waves):
+  def OnSourcesChanged(self, old_waves, changed=set(), added=set(), deleted=set()):
+    if len(changed) > 0:
+      for p in changed:
+        print('file changed: ' + p)
+    if len(added) > 0:
+      for p in added:
+        print('file added: ' + p)
+    if len(deleted) > 0:
+      for p in deleted:
+        print('file deleted ' + p)
+
+    new_specs = [ self.ConvTargetToSpec(target) for target in self.targets ]
+    new_waves = list(self.YieldWaves(new_specs))
+    new_sources = self.GetWaveSources(new_waves)
+    all_changes = changed.union(added, deleted)
+    recompile = False
+    for source in new_sources:
+      if source in all_changes:
+        recompile = True
+    if recompile:
+      print('Rebuilding...')
+      # for now we will recompile everything.
+      # TODO: Only recompile targets that have changed.
+      # TODO: Handle generating new targets for added files matching input glob
+      # TODO: Dry up this code
+      # TODO: Move this code into a seperate class to remove state
+      success = True
+      for wave_number, wave in enumerate(new_waves, start=1):
+        script = self.ConvWaveToScript(wave)
+        if not self.RunScript(script):
+          success = False
+          break
+
+      if not success:
+        print('Error running script')
+      else:
+        print('Build successful')
+    else:
+      print('Nothing To Do')
+
+  def WaitForChanges(self, waves, cb=None):
     if not inotify_exists:
       raise Exception('inotify is not installed. run pip install pyinotify')
-    dirs = set([os.path.dirname(p) for p in self.GetWaveSources(waves)])
+    sources = self.GetWaveSources(waves)
+    changed_files = set()
+    deleted_files = set()
+    added_files = set()
 
     class Identity(pyinotify.ProcessEvent):
-      def process_default(self, event):
-          print('Not Implemented Yet')
+
+      def process_IN_CREATE(self, event):
+        added_files.add(event.pathname)
+
+      def process_IN_DELETE(self, event):
+        deleted_files.add(event.pathname)
+
+      def process_IN_CLOSE_WRITE(self, event):
+        changed_files.add(event.pathname)
+
+    def reset():
+      changed_files.clear()
+      deleted_files.clear()
+      added_files.clear()
+
+    def process():
+      changed = set(changed_files)
+      deleted = set(deleted_files)
+      added = set(added_files)
+      reset()
+      if cb is not None:
+        cb(changed, added, deleted)
+      else:
+        self.OnSourcesChanged(waves, changed, added, deleted)
 
     def on_loop(notifier):
-      # notifier.proc_fun() is Identity's instance
-      s_inst = notifier.proc_fun().nested_pevent()
-      print(repr(s_inst), '\n', s_inst, '\n')
-      raise Exception('Not Implemented Yet')
+      if len(changed_files) + len(deleted_files) + len(added_files) > 0:
+        process()
 
     wm = pyinotify.WatchManager()
     # Stats is a subclass of ProcessEvent provided by pyinotify
     # for computing basics statistics.
     s = pyinotify.Stats()
-    notifier = pyinotify.Notifier(wm, default_proc_fun=Identity(s), read_freq=5)
+    notifier = pyinotify.Notifier(wm, default_proc_fun=Identity(s), read_freq=1)
+    dirs = set([os.path.dirname(p) for p in sources])
 
     for p in dirs:
+      print('Watching ' + p + ' for changes')
       wm.add_watch(p, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
     notifier.loop(callback=on_loop)
 
@@ -914,10 +979,6 @@ def main():
     cfg = Cfg(args.cfg_root, args.cfg)
     if args.print_cfg:
       print(cfg)
-    planner = Planner(
-        cfg=cfg,
-        src_root=args.src_root,
-        out_root=args.out_root)
     targets = []
     if args.test_all:
       for target in args.targets:
@@ -927,6 +988,11 @@ def main():
               targets.append(os.path.join(root, filename[:len(filename) - 3]))
     else:
       targets = args.targets
+    planner = Planner(
+        cfg=cfg,
+        src_root=args.src_root,
+        out_root=args.out_root,
+        targets=targets)
     success = True
     specs = [ planner.ConvTargetToSpec(target) for target in targets ]
     waves = list(planner.YieldWaves(specs))
