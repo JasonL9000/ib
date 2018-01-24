@@ -864,15 +864,28 @@ class Scout(ast.NodeVisitor):
 # -----------------------------------------------------------------------------
 
 
+def MakeAbspath(root, argpath):
+  return (
+    argpath if os.path.isabs(argpath) else
+    os.path.abspath(os.path.join(root, argpath)))
+
 LABEL_FILE = '__ib__'
 
 RED = '\x1b[1;31m'
 GREEN = '\x1b[1;32m'
 NORMAL = '\x1b[0m'
 
+class IbRunner(object):
+  "Handles CLI. Constructed with parsed arguments as input."
 
-def main():
-  def GetArgs():
+  default_out_root = '../out'
+  default_cfg_root = ''
+  default_cfg = 'debug'
+
+  def __init__(self, args):
+    self.args = args
+
+  def GetDefaultSourceRoot():
     src_root = os.getcwd()
     while src_root != '/':
       if os.path.exists(os.path.join(src_root, LABEL_FILE)):
@@ -880,9 +893,14 @@ def main():
       src_root = os.path.dirname(src_root)
     else:
       src_root = ''
-    out_root = '../out'
-    cfg_root = ''
-    cfg = 'debug'
+    return src_root
+
+  def GetCmdArgs():
+    src_root = IbRunner.GetDefaultSourceRoot()
+    out_root = IbRunner.default_out_root
+    cfg_root = IbRunner.default_cfg_root
+    cfg = IbRunner.default_cfg
+
     parser = argparse.ArgumentParser(
         description="An inntuitive builder of C++ projects. Version 0.7.1.")
     parser.add_argument(
@@ -941,14 +959,11 @@ def main():
              "absolute.) If the current directory is not in the source tree "
              "or the output tree, then you must give only absolute specs. The "
              "target will be built in the output tree.")
+    raw_args = parser.parse_args()
+    args = IbRunner.ProcessRawInput(raw_args)
+    return args
 
-    return parser.parse_args()
-  def MakeAbspath(root, argpath):
-    return (
-        argpath if os.path.isabs(argpath) else
-        os.path.abspath(os.path.join(root, argpath)))
-  try:
-    args = GetArgs()
+  def ProcessRawInput(args):
     if not args.src_root:
       raise IbError(
           "The root of the source tree was not given and could not be found. "
@@ -973,12 +988,10 @@ def main():
     args.out_root = MakeAbspath(
         args.src_root, os.path.join(args.out_root, args.cfg))
     args.cfg = os.path.basename(args.cfg)
-    if args.print_args:
-      for key in [ 'src_root', 'out_root', 'cfg_root', 'cfg' ]:
-        print('%s = %r' % (key, getattr(args, key)))
-    cfg = Cfg(args.cfg_root, args.cfg)
-    if args.print_cfg:
-      print(cfg)
+    return args
+
+  def GetTargets(self):
+    args = self.args
     targets = []
     if args.test_all:
       for target in args.targets:
@@ -988,46 +1001,102 @@ def main():
               targets.append(os.path.join(root, filename[:len(filename) - 3]))
     else:
       targets = args.targets
+    return targets
+
+  def GeneratePlans(self):
+    args = self.args
+    cfg = Cfg(args.cfg_root, args.cfg)
+    targets = self.GetTargets()
     planner = Planner(
         cfg=cfg,
         src_root=args.src_root,
         out_root=args.out_root,
         targets=targets)
-    success = True
     specs = [ planner.ConvTargetToSpec(target) for target in targets ]
     waves = list(planner.YieldWaves(specs))
+    return {
+      'cfg': cfg,
+      'planner': planner,
+      'specs': specs,
+      'targets': targets,
+      'waves': waves,
+    }
+
+  def PrintScript(self, plans):
+    waves = plans['waves']
+    planner = plans['planner']
     for wave_number, wave in enumerate(waves, start=1):
       script = planner.ConvWaveToScript(wave)
-      if args.print_script:
-        print('# wave %d\n%s' % (wave_number, script))
-      if args.no_run:
-        return 0
+      print('# wave %d\n%s' % (wave_number, script))
+
+  def RunWaves(self, plans):
+    success = True
+    args = self.args
+    waves = plans['waves']
+    planner = plans['planner']
+    for wave_number, wave in enumerate(waves, start=1):
+      script = planner.ConvWaveToScript(wave)
       if not planner.RunScript(script, force=args.force):
         success = False
         break
+    return success
+
+  def RunTestAll(self, plans):
+    pass_specs = []
+    fail_specs = []
+    for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
+      print('running %s' % spec.relpath)
+      status = subprocess.call(
+          [ os.path.join(planner.out_root, spec.relpath) ])
+      (pass_specs if status == 0 else fail_specs).append(spec)
+    for name, specs in [
+        (GREEN + 'passed' + NORMAL, pass_specs),
+        (RED + 'failed' + NORMAL, fail_specs) ]:
+      if specs:
+        print('%s %d (%s)' % (
+            name, len(specs), ', '.join(spec.relpath for spec in specs)))
+    return not fail_specs
+
+  def RunBuildTasks(self, plans):
+    args = self.args
+    planner = plans['planner']
+    waves = plans['waves']
+    success = self.RunWaves(plans)
     if success and (args.test_all or args.test):
-      pass_specs = []
-      fail_specs = []
-      for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
-        print('running %s' % spec.relpath)
-        status = subprocess.call(
-            [ os.path.join(planner.out_root, spec.relpath) ])
-        (pass_specs if status == 0 else fail_specs).append(spec)
-      for name, specs in [
-          (GREEN + 'passed' + NORMAL, pass_specs),
-          (RED + 'failed' + NORMAL, fail_specs) ]:
-        if specs:
-          print('%s %d (%s)' % (
-              name, len(specs), ', '.join(spec.relpath for spec in specs)))
-      success = not fail_specs
+      success = self.RunTestAll(plans)
     if args.watch:
       return planner.WaitForChanges(waves)
-    return 0 if success else -1
-  except IbError as err:
-    print('** ib error **')
-    for line in textwrap.wrap(str(err)):
-      print('  ' + line)
-    return -1
-  except subprocess.CalledProcessError as err:
-    print(('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
-        (err.cmd, err.output, err.returncode)))
+    return success
+
+  def RunAllTasks(self):
+    args = self.args
+    plans = self.GeneratePlans()
+    if args.print_args:
+      for key in [ 'src_root', 'out_root', 'cfg_root', 'cfg' ]:
+        print('%s = %r' % (key, getattr(args, key)))
+    if args.print_cfg:
+      print(Cfg(args.cfg_root, args.cfg))
+    if args.print_script:
+      self.PrintScript(plans)
+    if args.no_run:
+        return 0
+    return self.RunBuildTasks(plans)
+
+  def Run(self):
+    try:
+      args = self.args
+      success = self.RunAllTasks()
+      return 0 if success else -1
+    except IbError as err:
+      print('** ib error **')
+      for line in textwrap.wrap(str(err)):
+        print('  ' + line)
+      return -1
+    except subprocess.CalledProcessError as err:
+      print(('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
+          (err.cmd, err.output, err.returncode)))
+
+def main():
+  args = IbRunner.GetCmdArgs()
+  runner = IbRunner(args)
+  return runner.Run()
