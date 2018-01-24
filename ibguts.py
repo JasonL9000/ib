@@ -609,103 +609,18 @@ class Planner(object):
     finally:
       os.unlink(name)
 
-  def GetWaveSources(self, waves):
+  def GetWaveSources(self, wave):
     deps = set()
-    for wave in waves:
-      for job in wave:
-        all_deps = job.GetRule(self).dependencies
-        deps |= set(d for d in all_deps if not d.startswith(self.out_root))
+    for job in wave:
+      all_deps = job.GetRule(self).dependencies
+      deps |= set(d for d in all_deps if not d.startswith(self.out_root))
     return deps
 
-  def OnSourcesChanged(self, old_waves, changed=set(), added=set(), deleted=set()):
-    if len(changed) > 0:
-      for p in changed:
-        print('file changed: ' + p)
-    if len(added) > 0:
-      for p in added:
-        print('file added: ' + p)
-    if len(deleted) > 0:
-      for p in deleted:
-        print('file deleted ' + p)
-
-    new_specs = [ self.ConvTargetToSpec(target) for target in self.targets ]
-    new_waves = list(self.YieldWaves(new_specs))
-    new_sources = self.GetWaveSources(new_waves)
-    all_changes = changed.union(added, deleted)
-    recompile = False
-    for source in new_sources:
-      if source in all_changes:
-        recompile = True
-    if recompile:
-      print('Rebuilding...')
-      # for now we will recompile everything.
-      # TODO: Only recompile targets that have changed.
-      # TODO: Handle generating new targets for added files matching input glob
-      # TODO: Dry up this code
-      # TODO: Move this code into a seperate class to remove state
-      success = True
-      for wave_number, wave in enumerate(new_waves, start=1):
-        script = self.ConvWaveToScript(wave)
-        if not self.RunScript(script):
-          success = False
-          break
-
-      if not success:
-        print('Error running script')
-      else:
-        print('Build successful')
-    else:
-      print('Nothing To Do')
-
-  def WaitForChanges(self, waves, cb=None):
-    if not inotify_exists:
-      raise Exception('inotify is not installed. run pip install pyinotify')
-    sources = self.GetWaveSources(waves)
-    changed_files = set()
-    deleted_files = set()
-    added_files = set()
-
-    class Identity(pyinotify.ProcessEvent):
-
-      def process_IN_CREATE(self, event):
-        added_files.add(event.pathname)
-
-      def process_IN_DELETE(self, event):
-        deleted_files.add(event.pathname)
-
-      def process_IN_CLOSE_WRITE(self, event):
-        changed_files.add(event.pathname)
-
-    def reset():
-      changed_files.clear()
-      deleted_files.clear()
-      added_files.clear()
-
-    def process():
-      changed = set(changed_files)
-      deleted = set(deleted_files)
-      added = set(added_files)
-      reset()
-      if cb is not None:
-        cb(changed, added, deleted)
-      else:
-        self.OnSourcesChanged(waves, changed, added, deleted)
-
-    def on_loop(notifier):
-      if len(changed_files) + len(deleted_files) + len(added_files) > 0:
-        process()
-
-    wm = pyinotify.WatchManager()
-    # Stats is a subclass of ProcessEvent provided by pyinotify
-    # for computing basics statistics.
-    s = pyinotify.Stats()
-    notifier = pyinotify.Notifier(wm, default_proc_fun=Identity(s), read_freq=1)
-    dirs = set([os.path.dirname(p) for p in sources])
-
-    for p in dirs:
-      print('Watching ' + p + ' for changes')
-      wm.add_watch(p, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
-    notifier.loop(callback=on_loop)
+  def GetAllWaveSources(self, waves):
+    deps = set()
+    for wave in waves:
+      deps = deps.union(self.GetWaveSources(wave))
+    return deps
 
   def TryConvAbspathToRelpath(self, abspath):
     for root in [ self.src_root, self.out_root ]:
@@ -885,6 +800,7 @@ class IbRunner(object):
   def __init__(self, args):
     self.args = args
 
+  @staticmethod
   def GetDefaultSourceRoot():
     src_root = os.getcwd()
     while src_root != '/':
@@ -895,6 +811,7 @@ class IbRunner(object):
       src_root = ''
     return src_root
 
+  @staticmethod
   def GetCmdArgs():
     src_root = IbRunner.GetDefaultSourceRoot()
     out_root = IbRunner.default_out_root
@@ -963,6 +880,7 @@ class IbRunner(object):
     args = IbRunner.ProcessRawInput(raw_args)
     return args
 
+  @staticmethod
   def ProcessRawInput(args):
     if not args.src_root:
       raise IbError(
@@ -1012,14 +930,23 @@ class IbRunner(object):
         src_root=args.src_root,
         out_root=args.out_root,
         targets=targets)
-    specs = [ planner.ConvTargetToSpec(target) for target in targets ]
-    waves = list(planner.YieldWaves(specs))
+    specs_by_target = {}
+    waves_by_target = {}
+    specs = []
+    for target in targets:
+      spec = planner.ConvTargetToSpec(target)
+      specs += [spec]
+      specs_by_target[target] = spec
+      waves_by_target[target] = list(planner.YieldWaves([spec]))
+    waves = list(planner.YieldWaves(list(specs)))
     return {
       'cfg': cfg,
       'planner': planner,
       'specs': specs,
       'targets': targets,
       'waves': waves,
+      'waves_by_target': waves_by_target,
+      'specs_by_target': specs_by_target
     }
 
   def PrintScript(self, plans):
@@ -1057,6 +984,99 @@ class IbRunner(object):
             name, len(specs), ', '.join(spec.relpath for spec in specs)))
     return not fail_specs
 
+  def RunWatchTask(self, plans, cb=None):
+    # Check if inotify exists
+    if not inotify_exists:
+      raise Exception('inotify is not installed. run pip install pyinotify')
+    self.watched_plans = plans
+
+    # try finding files listed in any old or new waves
+    def GetAffectedTargets(changes):
+      affected = []
+      for target, wave in self.watched_plans['waves_by_target'].items():
+        sources = planner.GetAllWaveSources(wave)
+        for change in changes:
+          if change in sources:
+            affected += [target]
+          if change == target:
+            affected += [target]
+      return affected
+
+    def Rebuild(targets):
+      print('')
+      for target in targets:
+        print('Rebuild: ' + target)
+      print('-------------------------------')
+      success = True
+      specs_by_target = self.watched_plans['specs_by_target']
+      specs = [specs_by_target[t] for t in targets]
+      waves = list(self.watched_plans['planner'].YieldWaves(specs))
+      planner = plans['planner']
+      for wave_number, wave in enumerate(waves, start=1):
+        script = planner.ConvWaveToScript(wave)
+        if not planner.RunScript(script, force=False):
+          success = False
+          break
+      if success:
+        print('Build success')
+      print('Wating for changes...')
+
+      # always generate new plans for all targets
+      self.watched_plans = self.GeneratePlans()
+      return success
+
+    def OnSourcesChanged(changes):
+      affected_targets = GetAffectedTargets(changes)
+      if len(affected_targets) > 0:
+        return Rebuild(affected_targets)
+      # did a new file create a new target?
+      self.watched_plans = self.GeneratePlans()
+      affected_targets = GetAffectedTargets(changes)
+      if len(affected_targets) > 0:
+        return Rebuild(affected_targets)
+
+    planner = self.watched_plans['planner']
+    waves = self.watched_plans['waves']
+    sources = planner.GetAllWaveSources(waves)
+    changes = set()
+
+    class Identity(pyinotify.ProcessEvent):
+      def process_IN_CREATE(self, event):
+        print('file changed: ' + event.pathname)
+        changes.add(event.pathname)
+      def process_IN_DELETE(self, event):
+        print('file deleted: ' + event.pathname)
+        changes.add(event.pathname)
+      def process_IN_CLOSE_WRITE(self, event):
+        print('file modified: ' + event.pathname)
+        changes.add(event.pathname)
+
+    def process():
+      changed = set(changes)
+      changes.clear()
+      if cb is not None:
+        cb(changed)
+      else:
+        OnSourcesChanged(changed)
+
+    def on_loop(notifier):
+      if len(changes) > 0:
+        process()
+
+    wm = pyinotify.WatchManager()
+    # Stats is a subclass of ProcessEvent provided by pyinotify
+    # for computing basics statistics.
+    s = pyinotify.Stats()
+    notifier = pyinotify.Notifier(wm, default_proc_fun=Identity(s), read_freq=1)
+    dirs = set([os.path.dirname(p) for p in sources])
+
+    for p in dirs:
+      print('\n')
+      print('Watching ' + p + ' for changes')
+      wm.add_watch(p, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
+    print('-------------------------------')
+    notifier.loop(callback=on_loop)
+
   def RunBuildTasks(self, plans):
     args = self.args
     planner = plans['planner']
@@ -1064,8 +1084,6 @@ class IbRunner(object):
     success = self.RunWaves(plans)
     if success and (args.test_all or args.test):
       success = self.RunTestAll(plans)
-    if args.watch:
-      return planner.WaitForChanges(waves)
     return success
 
   def RunAllTasks(self):
@@ -1080,7 +1098,10 @@ class IbRunner(object):
       self.PrintScript(plans)
     if args.no_run:
         return 0
-    return self.RunBuildTasks(plans)
+    success = self.RunBuildTasks(plans)
+    if args.watch:
+      success = self.RunWatchTask(plans)
+    return success
 
   def Run(self):
     try:

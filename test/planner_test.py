@@ -136,7 +136,7 @@ class TestPlannerModel(unittest.TestCase):
     planner = get_planner(get_gcc_debug_cfg())
     specs = get_specs(planner)
     waves = list(planner.YieldWaves(specs))
-    sources = planner.GetWaveSources(waves)
+    sources = planner.GetAllWaveSources(waves)
     for dep in sorted(sources):
       print(dep)
     self.assertEqual([
@@ -149,13 +149,6 @@ class TestPlannerModel(unittest.TestCase):
       path.join(helper.root_dir, 'examples/hello_world/world.cc'),
       path.join(helper.root_dir, 'examples/hello_world/world.h')
     ], sorted(sources))
-
-  def test_wait_for_changes(self):
-    planner = get_planner(get_gcc_debug_cfg())
-    specs = get_specs(planner)
-    waves = list(planner.YieldWaves(specs))
-    invert_op = getattr(planner, "WaitForChanges", None)
-    self.assertTrue(callable(invert_op))
 
 if __name__ == '__main__':
   unittest.main()
