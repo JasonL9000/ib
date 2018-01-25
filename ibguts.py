@@ -919,7 +919,21 @@ class IbRunner(object):
               targets.append(os.path.join(root, filename[:len(filename) - 3]))
     else:
       targets = args.targets
-    return targets
+
+    after_glob = []
+    for target in targets:
+      abs_path = os.path.join(self.args.src_root, target)
+      base = os.path.splitext(abs_path)[0]
+      ext = os.path.splitext(abs_path)[1]
+      globbed_targets = [p for p in glob.glob(base) if os.path.isfile(p)]
+      if len(globbed_targets) > 0:
+        for glob_path in globbed_targets:
+          rel = os.path.relpath(glob_path, start=self.args.src_root)
+          new_target = os.path.splitext(rel)[0] + ext
+          after_glob.append(new_target)
+      else:
+        after_glob.append(target)
+    return after_glob
 
   def GeneratePlans(self):
     args = self.args
@@ -1070,8 +1084,8 @@ class IbRunner(object):
     notifier = pyinotify.Notifier(wm, default_proc_fun=Identity(s), read_freq=1)
     dirs = set([os.path.dirname(p) for p in sources])
 
+    print('\n')
     for p in dirs:
-      print('\n')
       print('Watching ' + p + ' for changes')
       wm.add_watch(p, pyinotify.ALL_EVENTS, rec=True, auto_add=True)
     print('-------------------------------')
