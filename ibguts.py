@@ -1008,7 +1008,7 @@ class IbRunner(object):
     def GetAffectedTargets(changes):
       affected = []
       for target, wave in self.watched_plans['waves_by_target'].items():
-        sources = planner.GetAllWaveSources(wave)
+        sources = [os.path.realpath(d) for d in planner.GetAllWaveSources(wave)]
         for change in changes:
           if change in sources:
             affected += [target]
@@ -1033,6 +1033,9 @@ class IbRunner(object):
           break
       if success:
         print('Build success')
+        if cb is not None:
+          cb(self.args, targets)
+
       print('Wating for changes...')
 
       # always generate new plans for all targets
@@ -1068,10 +1071,7 @@ class IbRunner(object):
     def process():
       changed = set(changes)
       changes.clear()
-      if cb is not None:
-        cb(changed)
-      else:
-        OnSourcesChanged(changed)
+      OnSourcesChanged(changed)
 
     def on_loop(notifier):
       if len(changes) > 0:
@@ -1082,7 +1082,7 @@ class IbRunner(object):
     # for computing basics statistics.
     s = pyinotify.Stats()
     notifier = pyinotify.Notifier(wm, default_proc_fun=Identity(s), read_freq=1)
-    dirs = set([os.path.dirname(p) for p in sources])
+    dirs = set([os.path.dirname(os.path.realpath(p)) for p in sources])
 
     print('\n')
     for p in dirs:
