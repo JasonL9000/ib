@@ -985,6 +985,8 @@ class IbRunner(object):
   def RunTestAll(self, plans):
     pass_specs = []
     fail_specs = []
+    specs = plans['specs']
+    planner = plans['planner']
     for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
       print('running %s' % spec.relpath)
       status = subprocess.call(
