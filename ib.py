@@ -287,7 +287,7 @@ class ExeJob(LinkerJob):
     # This is a temporary work-around for -main executables.
     # It should really backtrack from foo-main to foo-main.o properly.
     if rule.outputs[0].endswith("-main"):
-      rule.AppendToRecipe([ "mv", rule.outputs[0], rule.outputs[0][:-5] ])
+      rule.AppendToRecipe([ "cp", "-afl", rule.outputs[0], rule.outputs[0][:-5] ])
     return rule
 
   OUTPUT_SPEC_TYPES = { 'exe': ExeSpec }
