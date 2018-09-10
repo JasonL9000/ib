@@ -43,6 +43,8 @@ class Rule(object):
     self.outputs = outputs
     self.dependencies = set()
     self.recipe_lines = []
+    self.show_progress = 0
+    self.recipe_action = 'Building'
     for output in outputs:
       dirname = os.path.dirname(output)
       if dirname and not os.path.exists(dirname):
@@ -50,10 +52,17 @@ class Rule(object):
 
   @property
   def script(self):
+    progress_recipe = ''
+    if self.show_progress:
+      if len(self.recipe_lines) > 0:
+        progress_recipe = '\t@$(SHOW_PROGRESS) %s $@\n' % self.recipe_action
+      else:
+        progress_recipe = '\t@$(SHOW_PROGRESS) %s done\n' % self.recipe_action
+
     return '%s:%s\n%s\n' % (
         ' '.join(self.outputs),
         ''.join(' \\\n%s' % dependency for dependency in self.dependencies),
-        '\n'.join('\t%s' % line for line in self.recipe_lines))
+        progress_recipe + '\n'.join('\t%s' % line for line in self.recipe_lines))
 
   def AppendToRecipe(self, args):
     self.recipe_lines.append(' '.join(args))
@@ -219,6 +228,7 @@ class CompilerJob(Job):
 
   def GetRule(self, planner):
     rule = super(CompilerJob, self).GetRule(planner)
+    rule.recipe_action = 'Compiling';
     input_abspath = planner.GetPlan(self.input_spec).GetOutputAbspath(planner)
     rule.dependencies.add(input_abspath)
     for hdr in planner.GetHdrs(input_abspath):
@@ -246,6 +256,7 @@ class LinkerJob(Job):
     plans = set()
     planner.GetPlan(self.input_spec).ExtendPlans(planner, plans)
     rule = super(LinkerJob, self).GetRule(planner)
+    rule.recipe_action = 'Linking';
     out_flag_prefix = planner.cfg.link.out_flag_prefix if hasattr(planner.cfg.link, 'out_flag_prefix') else '-o '
     lib_flag_prefix = planner.cfg.link.lib_flag_prefix if hasattr(planner.cfg.link, 'lib_flag_prefix') else '-l'
     for plan in plans:
@@ -491,13 +502,27 @@ class Planner(object):
   def ConvTargetToSpec(self, target):
     return self.ConvRelpathToSpec(self.ConvTargetToRelpath(target))
 
-  def ConvWaveToScript(self, wave):
+  def ConvWaveToScript(self, wave, show_progress):
     rules = [ job.GetRule(self) for job in wave ]
     all_rule = Rule([ self.cfg.make.all_pseudo_target ])
     for rule in rules:
       all_rule.dependencies |= set(rule.outputs)
+      all_rule.recipe_action = rule.recipe_action
+      all_rule.show_progress = show_progress;
+      rule.show_progress     = show_progress;
     rules.insert(0, all_rule)
-    return '\n'.join(rule.script for rule in rules)
+
+    progress_preamble = ''
+    if show_progress:
+      progress_preamble += 'ifndef SHOW_PROGRESS\n'
+      progress_preamble += 'T := $(shell $(MAKE) ' + self.cfg.make.all_pseudo_target + ' --no-print-directory -nrRf $(firstword $(MAKEFILE_LIST)) SHOW_PROGRESS="PROGRESS_IND" | grep -c "PROGRESS_IND")\n'
+      progress_preamble += 'N := x\n'
+      progress_preamble += 'C = $(words $N)$(eval N := x $N)\n'
+      progress_preamble += 'SHOW_PROGRESS = printf \'[%3d%%] %s %s\\n\' `expr $C \'*\' 100 / $T`\n'
+      progress_preamble += 'endif\n';
+      progress_preamble += '\n';
+
+    return progress_preamble + '\n'.join(rule.script for rule in rules)
 
   def GetCcArgs(self):
     return [ self.cfg.cc.tool, '-I' + self.src_root, '-I' + self.out_root ]  \
@@ -788,6 +813,9 @@ def main():
         '--print_script', action='store_true',
         help="Print each make script before it is run.")
     parser.add_argument(
+        '--show_progress', action='store_true',
+        help="Print progress.")
+    parser.add_argument(
         '--no_run', action='store_true',
         help="Don't actually run any make scripts. Use this option when you "
              "want to see what the build waves would contain but not actually "
@@ -858,7 +886,7 @@ def main():
     success = True
     specs = [ planner.ConvTargetToSpec(target) for target in targets ]
     for wave_number, wave in enumerate(planner.YieldWaves(specs), start=1):
-      script = planner.ConvWaveToScript(wave)
+      script = planner.ConvWaveToScript(wave, args.show_progress)
       if args.print_script:
         print '# wave %d\n%s' % (wave_number, script)
       if args.no_run:
