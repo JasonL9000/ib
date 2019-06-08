@@ -168,3 +168,34 @@ For some devs, windows has always been a headache for those who are not familiar
 - Add ib to your PATH variable `C:\ib`
 - Open the visual studio developer command prompt, located in the start menu under Visual Studio
 - Copy the win-common.cfg to your project and use it `ib --cfg win-common example.cc` :)
+
+#### Pip Usage
+
+- install pip tools
+  ```
+    pip install --user --upgrade pip setuptools wheel twine
+  ```
+
+- build package
+  ```
+    python setup.py bdist_wheel
+  ```
+
+- install build package
+  ```
+    pip install dist/*.whl
+  ```
+
+- publish package
+  - create `~/.pypirc` in your home folder
+    ```
+      [distutils]
+      index-servers=pypi
+      [pypi]
+      repository=https://upload.pypi.org/legacy/
+      username=<username>
+    ```
+  - push to pypi.org
+    ```
+      twine upload dist/*
+    ```
