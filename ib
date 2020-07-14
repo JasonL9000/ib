@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 # Copyright Jason Lucas
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -121,7 +121,23 @@ class CppSpec(Spec):
 
   PREFIX = ''
   DEFAULT_EXT = '.cc'
-  OTHER_EXTS = [ '.c', '.cpp', '.cxx' ]
+  OTHER_EXTS = [ '.c', '.cpp', '.cxx', '.ld' ]
+
+
+class AssemblerWithCppSpec(Spec):
+  def __init__(self, *args, **kwargs):
+    super(AssemblerWithCppSpec, self).__init__(*args, **kwargs)
+    self.cached_hdrs = None
+
+  def YieldImpliedSpecs(self, planner, abspath):
+    for hdr in planner.GetHdrs(abspath):
+      implementation_spec = GetDefaultRelatedSpec(hdr, ObjSpec)
+      if planner.GetPlan(implementation_spec).doable:
+        yield implementation_spec
+
+  PREFIX = ''
+  DEFAULT_EXT = '.S'
+  OTHER_EXTS = [ '.s', '.S' ]
 
 
 class ExeSpec(Spec):
@@ -130,7 +146,7 @@ class ExeSpec(Spec):
 
   PREFIX = ''
   DEFAULT_EXT = ''
-  OTHER_EXTS = [ '.js', '.exe', '.html' ]
+  OTHER_EXTS = [ '.js', '.exe', '.html', '.elf' ]
 
 
 class SoSpec(Spec):
@@ -243,6 +259,27 @@ class CompilerJob(Job):
   INPUT_SPEC_TYPE = CppSpec
   OUTPUT_SPEC_TYPES = { 'obj': ObjSpec }
 
+
+class AssemblerWithCppCompilerJob(Job):
+  def __init__(self, *args, **kwargs):
+    super(AssemblerWithCppCompilerJob, self).__init__(*args, **kwargs)
+
+  def GetRule(self, planner):
+    rule = super(AssemblerWithCppCompilerJob, self).GetRule(planner)
+    rule.recipe_action = 'Compiling';
+    input_abspath = planner.GetPlan(self.input_spec).GetOutputAbspath(planner)
+    rule.dependencies.add(input_abspath)
+    for hdr in planner.GetHdrs(input_abspath):
+      plan = planner.GetPlan(hdr)
+      if plan.doable:
+        rule.dependencies.add(plan.GetOutputAbspath(planner))
+    rule.AppendToRecipe(
+        planner.GetCcArgs() + [ '-x', 'assembler-with-cpp', '-c', '-o ' + rule.outputs[0], input_abspath ])
+    return rule
+
+  VERB = 'compile'
+  INPUT_SPEC_TYPE = AssemblerWithCppSpec
+  OUTPUT_SPEC_TYPES = { 'obj': ObjSpec }
 
 class LinkerJob(Job):
   def __init__(self, *args, **kwargs):
@@ -546,10 +583,15 @@ class Planner(object):
         hdrs = None
     if hdrs is None:
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
+      hdrs = []
       output = subprocess.check_output(args)
+
+      # return if no hdrs found
+      if not output.strip():
+        return hdrs
+
       output = output.split(':', 1)[1]
       output = output.replace('\\', ' ')
-      hdrs = []
       for line in output.split():
         spec = self.TryConvAbspathToSpec(line.strip())
         if spec is not None:
