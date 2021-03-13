@@ -130,7 +130,7 @@ class ExeSpec(Spec):
 
   PREFIX = ''
   DEFAULT_EXT = ''
-  OTHER_EXTS = [ '.js', '.exe' ]
+  OTHER_EXTS = [ '.js', '.exe', '.html' ]
 
 
 class SoSpec(Spec):
@@ -918,6 +918,7 @@ def main():
   except subprocess.CalledProcessError, err:
     print ('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
         (err.cmd, err.output, err.returncode))
+    return -1
 
 
 if __name__ == '__main__':
