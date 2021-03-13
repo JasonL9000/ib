@@ -29,7 +29,7 @@ def ReplaceExt(path, new_ext):
 
 
 def YieldSubtypes(base_type):
-  for obj in globals().itervalues():
+  for obj in globals().values():
     if type(obj) is type and issubclass(obj, base_type) and obj is not base_type:
       yield obj
 
@@ -203,7 +203,7 @@ class Job(object):
         type(self).VERB,
         self.input_spec.relpath,
         ', '.join(self.GetOutputSpec(key).relpath
-                  for key in type(self).OUTPUT_SPEC_TYPES.iterkeys()))
+                  for key in type(self).OUTPUT_SPEC_TYPES.keys()))
 
   def GetOutputSpec(self, key):
     return self.explicit_output_specs.get(
@@ -327,7 +327,7 @@ def _InitJobTypes():
   for job_type in YieldSubtypes(Job):
     if not hasattr(job_type, 'OUTPUT_SPEC_TYPES'):
       continue
-    for key, spec_type in job_type.OUTPUT_SPEC_TYPES.iteritems():
+    for key, spec_type in job_type.OUTPUT_SPEC_TYPES.items():
       _PRODUCERS_BY_OUTPUT_SPEC_TYPE.setdefault(spec_type, []).append(Producer(key, job_type))
 
 
@@ -676,7 +676,7 @@ class Cfg(object):
     del self.__dict__['__builtins__']
     del self.Obj
     self.cfg = Obj(name=name, base=base.cfg if base else None, imports=imports)
-    for obj_name, field_names in Cfg.DEFAULT_EMPTY_LISTS.iteritems():
+    for obj_name, field_names in Cfg.DEFAULT_EMPTY_LISTS.items():
       obj = getattr(self, obj_name)
       for field_name in field_names:
         if not hasattr(obj, field_name):
@@ -686,7 +686,7 @@ class Cfg(object):
     def Comment(cfg, label):
       return '# %s: %s%s' % (label, cfg.name, ExpandImports(cfg.imports))
     def ExpandImports(imports):
-      return ' (imports %s)' % ', '.join('%s%s' % (name, ExpandImports(nested_imports)) for name, nested_imports in imports.iteritems()) if imports else ''
+      return ' (imports %s)' % ', '.join('%s%s' % (name, ExpandImports(nested_imports)) for name, nested_imports in imports.items()) if imports else ''
     def Lines():
       cfg = self.cfg
       label = 'name'
@@ -694,7 +694,7 @@ class Cfg(object):
         yield Comment(self.cfg, label)
         label = 'based on'
         cfg = cfg.base
-      for key, val in self.__dict__.iteritems():
+      for key, val in self.__dict__.items():
         if val is not self.cfg:
           yield '%s = %r' % (key, val)
     return '\n'.join(Lines())
@@ -703,7 +703,7 @@ class Cfg(object):
     def Check(cfg):
       return cfg.name == some_name or CheckImports(cfg.imports) or (Check(cfg.base) if cfg.base is not None else False)
     def CheckImports(imports):
-      return any(name == some_name or CheckImports(nested_imports) for name, nested_imports in imports.iteritems())
+      return any(name == some_name or CheckImports(nested_imports) for name, nested_imports in imports.items())
     return Check(self.cfg)
 
   def __Update(self, root, name, conv_dots=True):
@@ -720,7 +720,7 @@ class Cfg(object):
     imports = {}
     for name in scout.imports:
       imports[name] = self.__Update(root, name)
-    exec compile(ast.Module(body=scout.stmts), filename, mode='exec') in self.__dict__
+    exec(compile(ast.Module(body=scout.stmts), filename, mode='exec'), self.__dict__)
     return imports
 
   DEFAULT_EMPTY_LISTS = {
@@ -735,7 +735,7 @@ class Obj(object):
     self.__dict__.update(kwargs)
 
   def __repr__(self):
-    return '%s(%s)' % (Obj.__name__, ','.join('%s=%r' % item for item in self.__dict__.iteritems()))
+    return '%s(%s)' % (Obj.__name__, ','.join('%s=%r' % item for item in self.__dict__.items()))
 
 
 class Scout(ast.NodeVisitor):
@@ -866,10 +866,10 @@ def main():
         args.src_root, os.path.join(args.out_root, args.cfg))
     if args.print_args:
       for key in [ 'src_root', 'out_root', 'cfg_root', 'cfg' ]:
-        print '%s = %r' % (key, getattr(args, key))
+        print('%s = %r' % (key, getattr(args, key)))
     cfg = Cfg(args.cfg_root, args.cfg)
     if args.print_cfg:
-      print cfg
+      print(cfg)
     planner = Planner(
         cfg=cfg,
         src_root=args.src_root,
@@ -888,7 +888,7 @@ def main():
     for wave_number, wave in enumerate(planner.YieldWaves(specs), start=1):
       script = planner.ConvWaveToScript(wave, args.show_progress)
       if args.print_script:
-        print '# wave %d\n%s' % (wave_number, script)
+        print('# wave %d\n%s' % (wave_number, script))
       if args.no_run:
         return 0
       if not planner.RunScript(script, force=args.force):
@@ -898,7 +898,7 @@ def main():
       pass_specs = []
       fail_specs = []
       for spec in [ spec for spec in specs if spec.atom.endswith('-test') ]:
-        print 'running %s' % spec.relpath
+        print('running %s' % spec.relpath)
         status = subprocess.call(
             [ os.path.join(planner.out_root, spec.relpath) ])
         (pass_specs if status == 0 else fail_specs).append(spec)
@@ -906,18 +906,18 @@ def main():
           (GREEN + 'passed' + NORMAL, pass_specs),
           (RED + 'failed' + NORMAL, fail_specs) ]:
         if specs:
-          print '%s %d (%s)' % (
-              name, len(specs), ', '.join(spec.relpath for spec in specs))
+          print('%s %d (%s)' % (
+              name, len(specs), ', '.join(spec.relpath for spec in specs)))
       success = not fail_specs
     return 0 if success else -1
-  except IbError, err:
-    print '** ib error **'
+  except IbError as err:
+    print('** ib error **')
     for line in textwrap.wrap(str(err)):
-      print '  ' + line
+      print('  ' + line)
     return -1
-  except subprocess.CalledProcessError, err:
-    print ('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
-        (err.cmd, err.output, err.returncode))
+  except subprocess.CalledProcessError as err:
+    print(('*** error running subprocess ***\n%s\n%s\nreturn code: %d' %
+        (err.cmd, err.output, err.returncode)))
     return -1
 
 
