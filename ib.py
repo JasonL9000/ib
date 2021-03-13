@@ -546,7 +546,7 @@ class Planner(object):
         hdrs = None
     if hdrs is None:
       args = self.GetCcArgs() + self.cfg.cc.hdrs_flags + [ abspath ]
-      output = subprocess.check_output(args)
+      output = subprocess.check_output(args).decode('utf-8')
       output = output.split(':', 1)[1]
       output = output.replace('\\', ' ')
       hdrs = []
@@ -596,7 +596,7 @@ class Planner(object):
 
   def RunScript(self, script, force=False):
     with tempfile.NamedTemporaryFile(delete=False) as f:
-      f.write(script)
+      f.write(script.encode('utf-8'))
       name = f.name
     try:
       return subprocess.call(
